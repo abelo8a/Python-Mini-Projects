@@ -14,10 +14,9 @@ def get_positive_float(prompt_message):
             print('Input a valid number')
 
 
-def plot_triangle(cathetus_a, cathetus_b):
-    """Genera una gráfica del triángulo rectángulo."""
+def plot_triangle(cathetus_a, cathetus_b, angle_a, angle_b):
+    """Genera una gráfica del triángulo rectángulo con información de los ángulos."""
     # Coordenadas de los tres vértices: (0,0), (Base, 0), (0, Altura)
-    # Asignamos Cateto A a la base (X) y Cateto B a la altura (Y)
     x = [0, cathetus_a, 0, 0]
     y = [0, 0, cathetus_b, 0]
 
@@ -26,11 +25,19 @@ def plot_triangle(cathetus_a, cathetus_b):
     plt.fill(x, y, color='skyblue', alpha=0.4)  # Rellenar el triángulo
 
     # Etiquetas de los lados
-    plt.text(cathetus_a / 2, -0.05 * cathetus_b, f'A = {cathetus_a:.2f}', ha='center', va='top', fontsize=10,
+    plt.text(cathetus_a / 2, -0.06 * cathetus_b, f'A = {cathetus_a:.2f}', ha='center', va='top', fontsize=10,
              weight='bold')
-    plt.text(-0.05 * cathetus_a, cathetus_b / 2, f'B = {cathetus_b:.2f}', ha='right', va='center', fontsize=10,
+    plt.text(-0.06 * cathetus_a, cathetus_b / 2, f'B = {cathetus_b:.2f}', ha='right', va='center', fontsize=10,
              weight='bold')
     plt.text(cathetus_a / 2, cathetus_b / 2, f'H', ha='left', va='bottom', fontsize=10, weight='bold', color='darkblue')
+
+    # Etiquetas de los ángulos en los vértices correspondientes
+    plt.text(0.03 * cathetus_a, 0.03 * cathetus_b, '90°', ha='left', va='bottom', fontsize=9, color='red',
+             weight='bold')
+    plt.text(cathetus_a * 0.85, 0.03 * cathetus_b, f'{angle_a:.1f}°', ha='right', va='bottom', fontsize=9,
+             color='purple', weight='bold')
+    plt.text(0.03 * cathetus_a, cathetus_b * 0.85, f'{angle_b:.1f}°', ha='left', va='top', fontsize=9, color='purple',
+             weight='bold')
 
     plt.title('Triángulo Rectángulo Resultante')
     plt.xlabel('Eje X (Cateto A)')
@@ -43,10 +50,16 @@ def plot_triangle(cathetus_a, cathetus_b):
 
 
 def show_values(cathetus_a, cathetus_b, hypotenuse):
-    """Muestra los resultados matemáticos calculados."""
+    """Muestra los resultados matemáticos calculados de geometría y trigonometría."""
     # Fórmulas de Perímetro y Área
     perimeter = cathetus_a + cathetus_b + hypotenuse
     area = (cathetus_a * cathetus_b) / 2
+
+    # Cálculo de ángulos internos usando funciones trigonométricas inversas (Arctan)
+    # math.degrees() transforma los radianes nativos de Python a grados tradicionales
+    angle_right = 90.0
+    angle_a = math.degrees(math.atan2(cathetus_b, cathetus_a))
+    angle_b = 180.0 - angle_right - angle_a  # La suma interna siempre da 180°
 
     print(f"\n" + "=" * 40)
     print(f"  RESULTADOS DEL TRIÁNGULO")
@@ -57,10 +70,14 @@ def show_values(cathetus_a, cathetus_b, hypotenuse):
     print(f"-" * 40)
     print(f"• Perímetro:    {perimeter:.2f}")
     print(f"• Área:         {area:.2f}")
+    print(f"-" * 40)
+    print(f"• Ángulo Recto (C): {angle_right:.2f}°")
+    print(f"• Ángulo opuesto a B (α): {angle_a:.2f}°")
+    print(f"• Ángulo opuesto a A (β): {angle_b:.2f}°")
     print(f"=" * 40)
 
-    # Llamar a la función gráfica
-    plot_triangle(cathetus_a, cathetus_b)
+    # Llamar a la función gráfica pasando los nuevos parámetros de ángulos
+    plot_triangle(cathetus_a, cathetus_b, angle_a, angle_b)
 
 
 # Mensajes de los prompts
