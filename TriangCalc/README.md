@@ -35,7 +35,7 @@ Una aplicación interactiva de consola escrita en Python para resolver, registra
 Inicia la aplicación ejecutando el script principal desde tu terminal:
 
 ```bash
-python tricalc.py
+python TriangCalc.py
 ```
 
 ### Opciones del Menú:
