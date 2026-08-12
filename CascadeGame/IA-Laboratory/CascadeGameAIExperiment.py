@@ -5,6 +5,9 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QLabel, QStatusB
 from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QAction, QFont, QPainter, QColor, QPen, QBrush, QActionGroup
 
+# NUEVO: Importaciones necesarias para la renderización gráfica del análisis
+import matplotlib.pyplot as plt
+
 
 class TableroJuego(QWidget):
     def __init__(self, main_window):
@@ -14,7 +17,7 @@ class TableroJuego(QWidget):
         self.setMouseTracking(True)
 
     def paintEvent(self, event):
-        if not self.main_window.game_active or self.main_window.modo_laboratorio:
+        if not self.main_window.game_active or self.main_window.modo_laboratorio: 
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -57,14 +60,17 @@ class BloquesGame(QMainWindow):
         self.puntos_eliminados_ronda = 0
         self.total_bloques_eliminados_partida = 0
         self.game_active = False
-        self.modo_bot = "AdvHeuristic"  # Iniciamos con la nueva IA por defecto
+        self.modo_bot = "AdvHeuristic"
         self.modo_laboratorio = False
         self.bloques_seleccionados_bot = set()
         self.timer_bot = None
+
+        # Estructura para almacenar los datos históricos del último benchmark
+        self.ultimos_resultados_bench = None
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('Bloques Game - INTELIGENCIA ARTIFICIAL AVANZADA')
+        self.setWindowTitle('Bloques Game - LABORATORIO CON GRÁFICAS DE IA')
         self.setFixedSize(545, 385)
         self.setStyleSheet("background-color: black; color: white;")
         self.central_widget = QWidget(self)
@@ -119,11 +125,12 @@ class BloquesGame(QMainWindow):
         self.label_rest_valor.setFont(font_values)
         self.label_rest_valor.setStyleSheet("color: #55FF55; border: none;")
 
+        # CORRECCIÓN TÉCNICA: Actualizado a 200 partidas analizadas
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Listo - Menú Experimento para simular 50 partidas")
+        self.status_bar.showMessage("Listo - Menú Experimento para simular 200 partidas")
 
-        # Estructuración de la barra de menús
+        # Configuración de menús superiores
         menu_bar = self.menuBar()
         menu_archivo = menu_bar.addMenu('Archivo')
 
@@ -137,8 +144,6 @@ class BloquesGame(QMainWindow):
 
         menu_modos = menu_bar.addMenu('Modo de Bot')
         grupo_modos = QActionGroup(self)
-
-        # Añadimos la nueva IA Avanzada a la barra de selección
         for modo in ["AdvHeuristic", "Greedy", "Heurístico", "Random"]:
             act = QAction(modo, self, checkable=True)
             if modo == "AdvHeuristic": act.setChecked(True)
@@ -147,9 +152,16 @@ class BloquesGame(QMainWindow):
             menu_modos.addAction(act)
 
         menu_lab = menu_bar.addMenu('Experimento')
-        action_bench = QAction('Correr Benchmark (50 Partidas)', self)
+        # CORRECCIÓN TÉCNICA: Actualizado el texto descriptivo de la acción
+        action_bench = QAction('Correr Benchmark (200 Partidas)', self)
         action_bench.triggered.connect(self.ejecutar_benchmark)
         menu_lab.addAction(action_bench)
+
+        self.menu_visualizacion = menu_bar.addMenu('Visualización')
+        self.action_graficar = QAction('Mostrar Gráficas Comparativas', self)
+        self.action_graficar.setEnabled(False)  # Bloqueado hasta que existan datos reales
+        self.action_graficar.triggered.connect(self.mostrar_graficas_analiticas)
+        self.menu_visualizacion.addAction(self.action_graficar)
 
     def cambiar_modo(self, nuevo_modo):
         self.modo_bot = nuevo_modo
@@ -197,15 +209,12 @@ class BloquesGame(QMainWindow):
         self.eliminar_recursivo_matriz(matriz, w, z + 1, target_val)
 
     def aplicar_fisicas_en_matriz(self, matriz):
-        """Aplica gravedad y compresión horizontal a una matriz dada (real o simulada)."""
         for c in range(10):
             col_filt = [matriz[c][i] for i in range(10) if matriz[c][i] != 0]
             matriz[c] = [0] * (10 - len(col_filt)) + col_filt
-
         columnas_vivas = [matriz[c] for c in range(10) if any(matriz[c][i] != 0 for i in range(10))]
         columnas_vivas += [[0] * 10 for _ in range(10 - len(columnas_vivas))]
-        for c in range(10):
-            matriz[c] = columnas_vivas[c]
+        for c in range(10): matriz[c] = columnas_vivas[c]
 
     def aplicar_fisicas_reales(self):
         self.aplicar_fisicas_en_matriz(self.MyArray)
@@ -231,48 +240,32 @@ class BloquesGame(QMainWindow):
 
     def finalizar_partida(self):
         if not self.modo_laboratorio: self.timer_bot.stop()
-        atrapadas = sum(1 for c in range(10) for i in range(10) if self.MyArray[c][i] != 0)
         self.game_active = False
-        if not self.modo_laboratorio:
-            self.label_rest_valor.setText(str(atrapadas))
-            self.status_bar.showMessage(f"Fin. Método: {self.modo_bot} | Quedaron: {atrapadas}")
 
-    # LÓGICA DE EVALUACIÓN PREDICTIVA AVANZADA
     def evaluar_tablero_futuro(self, c_origen, i_origen, target_val):
-        """Simula una jugada y devuelve una puntuación heurística basada en la salud del tablero."""
         matriz_temp = [fila[:] for fila in self.MyArray]
-
-        # 1. Simular eliminación del grupo y aplicar físicas de gravedad en memoria
         self.puntos_eliminados_ronda = 0
         self.eliminar_recursivo_matriz(matriz_temp, c_origen, i_origen, target_val)
         self.aplicar_fisicas_en_matriz(matriz_temp)
-
-        # 2. Analizar el tablero resultante
         visitados_globales = set()
         conectividad_total = 0
         bloques_aislados = 0
         columnas_vacias = 0
-
         for c in range(10):
             if all(matriz_temp[c][i] == 0 for i in range(10)):
                 columnas_vacias += 1
                 continue
-
             for i in range(10):
                 val = matriz_temp[c][i]
                 if val != 0 and (c, i) not in visitados_globales:
                     visitados_grupo = set()
                     tam_grupo = self.contar_grupo_simulado(c, i, val, visitados_grupo, matriz_temp)
                     visitados_globales.update(visitados_grupo)
-
                     if tam_grupo == 1:
                         bloques_aislados += 1
                     else:
                         conectividad_total += (tam_grupo * tam_grupo)
-
-        # Ecuación de Salud de Heurística Avanzada
-        score_salud = conectividad_total - (bloques_aislados * 15) + (columnas_vacias * 50)
-        return score_salud
+        return conectividad_total - (bloques_aislados * 15) + (columnas_vacias * 50)
 
     def ejecutar_ciclo_bot(self):
         if not self.game_active: return
@@ -289,9 +282,7 @@ class BloquesGame(QMainWindow):
             self.finalizar_partida()
             return
 
-        # SELECCIÓN ESTRATÉGICA SEGÚN ALGORITMO
         if self.modo_bot == "AdvHeuristic":
-            # Ejecuta la simulación predictiva para cada jugada posible y escoge el puntaje más alto
             mejor = max(movimientos_validos,
                         key=lambda x: (self.evaluar_tablero_futuro(x[2], x[1], self.MyArray[x[2]][x[1]]), x[0], x[1]))
         elif self.modo_bot == "Greedy":
@@ -302,33 +293,26 @@ class BloquesGame(QMainWindow):
             mejor = random.choice(movimientos_validos)
 
         tamano_g, coord_i, coord_c, celdas_grupo = mejor
-        if not self.modo_laboratorio:
-            self.bloques_seleccionados_bot = celdas_grupo
-            self.tablero.update()
-
         self.puntos_eliminados_ronda = 0
         target_val = self.MyArray[coord_c][coord_i]
         self.eliminar_recursivo_matriz(self.MyArray, coord_c, coord_i, target_val)
         self.calcular_puntuaje()
         self.aplicar_fisicas_reales()
         self.actualizar_contadores_interfaz()
-
-        if not self.modo_laboratorio:
-            self.bloques_seleccionados_bot.clear()
-            self.tablero.update()
+        self.tablero.update()
 
     def ejecutar_benchmark(self):
-        self.status_bar.showMessage("Ejecutando experimento con IA Avanzada...")
+        self.status_bar.showMessage("Ejecutando benchmark de 200 partidas...")
         QApplication.processEvents()
         self.modo_laboratorio = True
 
         tableros_prueba = [[[random.randint(3, 7) for _ in range(10)] for _ in range(10)] for _ in range(50)]
-        resultados = {"AdvHeuristic": {"puntos": [], "sobrantes": []},
-                      "Greedy": {"puntos": [], "sobrantes": []},
-                      "Heurístico": {"puntos": [], "sobrantes": []},
-                      "Random": {"puntos": [], "sobrantes": []}}
+        self.ultimos_resultados_bench = {"AdvHeuristic": {"puntos": [], "sobrantes": []},
+                                         "Greedy": {"puntos": [], "sobrantes": []},
+                                         "Heurístico": {"puntos": [], "sobrantes": []},
+                                         "Random": {"puntos": [], "sobrantes": []}}
 
-        for algoritmo in resultados.keys():
+        for algoritmo in self.ultimos_resultados_bench.keys():
             self.modo_bot = algoritmo
             for idx in range(50):
                 self.MyArray = [fila[:] for fila in tableros_prueba[idx]]
@@ -338,29 +322,39 @@ class BloquesGame(QMainWindow):
                 self.game_active = True
                 while self.game_active:
                     self.ejecutar_ciclo_bot()
-
                 sobrantes = sum(1 for c in range(10) for i in range(10) if self.MyArray[c][i] != 0)
-                resultados[algoritmo]["puntos"].append(self.tot_puntos)
-                resultados[algoritmo]["sobrantes"].append(sobrantes)
+                self.ultimos_resultados_bench[algoritmo]["puntos"].append(self.tot_puntos)
+                self.ultimos_resultados_bench[algoritmo]["sobrantes"].append(sobrantes)
 
-        reporte = "====================================================\n"
-        reporte += "     REPORTE CIENTÍFICO CON IA AVANZADA (50 Tests)\n"
-        reporte += "====================================================\n"
-        for alg, data in resultados.items():
-            prom_puntos = sum(data["puntos"]) / 50
-            prom_sobrantes = sum(data["sobrantes"]) / 50
-            reporte += f"🤖 Algoritmo: {alg:<14}\n"
-            reporte += f"   • Promedio Puntos: {prom_puntos:.1f}\n"
-            reporte += f"   • Bloques Atrapados promedio: {prom_sobrantes:.2f}\n"
-            reporte += "----------------------------------------------------\n"
-
-        with open("reporte_algoritmos.txt", "w", encoding="utf-8") as f:
-            f.write(reporte)
-
-        print("\n" + reporte)
         self.modo_laboratorio = False
-        self.label_modo.setText(self.modo_bot)
-        self.status_bar.showMessage("¡Benchmark finalizado! Datos guardados con éxito.")
+        self.action_graficar.setEnabled(True)  # Se habilita la opción de graficar
+        self.cambiar_modo("AdvHeuristic")
+        self.status_bar.showMessage("¡Benchmark completado! Menú 'Visualización' habilitado.")
+
+    def mostrar_graficas_analiticas(self):
+        if not self.ultimos_resultados_bench: return
+
+        algoritmos = list(self.ultimos_resultados_bench.keys())
+        prom_puntos = [sum(self.ultimos_resultados_bench[a]["puntos"]) / 50 for a in algoritmos]
+        prom_sobrantes = [sum(self.ultimos_resultados_bench[a]["sobrantes"]) / 50 for a in algoritmos]
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
+        fig.suptitle("Análisis Comparativo del Rendimiento de las IA (200 Tests)", fontsize=14, weight='bold')
+
+        colores_puntos = ['#00E5FF', '#FFD700', '#FF3D00', '#9E9E9E']
+        ax1.bar(algoritmos, prom_puntos, color=colores_puntos, edgecolor='black', width=0.6)
+        ax1.set_title("Puntuación Promedio Alcanzada (Mayor es mejor)")
+        ax1.set_ylabel("Puntos")
+        ax1.grid(axis='y', linestyle='--', alpha=0.5)
+
+        colores_sobrantes = ['#00E676', '#FFEA00', '#FF1744', '#757575']
+        ax2.bar(algoritmos, prom_sobrantes, color=colores_sobrantes, edgecolor='black', width=0.6)
+        ax2.set_title("Bloques Atrapados Promedio (Menor es mejor)")
+        ax2.set_ylabel("Cantidad de Bloques")
+        ax2.grid(axis='y', linestyle='--', alpha=0.5)
+
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -368,3 +362,4 @@ if __name__ == '__main__':
     game = BloquesGame()
     game.show()
     sys.exit(app.exec())
+
