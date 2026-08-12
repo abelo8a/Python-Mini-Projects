@@ -27,18 +27,12 @@ class TableroJuego(QWidget):
                 if (c, i) in self.main_window.bloques_seleccionados_bot:
                     painter.setPen(QPen(QColor(255, 0, 50), 4, Qt.PenStyle.DashLine))
                 else:
-                    if lados == 3:
-                        pen_color = QColor(3, 182, 17)
-                    elif lados == 4:
-                        pen_color = QColor(255, 255, 0)
-                    elif lados == 5:
-                        pen_color = QColor(18, 236, 254)
-                    elif lados == 6:
-                        pen_color = QColor(238, 23, 23)
-                    elif lados == 7:
-                        pen_color = QColor(255, 255, 255)
-                    else:
-                        pen_color = QColor(100, 100, 100)
+                    if lados == 3: pen_color = QColor(3, 182, 17)
+                    elif lados == 4: pen_color = QColor(255, 255, 0)
+                    elif lados == 5: pen_color = QColor(18, 236, 254)
+                    elif lados == 6: pen_color = QColor(238, 23, 23)
+                    elif lados == 7: pen_color = QColor(255, 255, 255)
+                    else: pen_color = QColor(100, 100, 100)
                     painter.setPen(QPen(pen_color, 2))
 
                 painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -61,28 +55,30 @@ class BloquesGame(QMainWindow):
         self.tot_puntos = 0
         self.puntos_eliminados_ronda = 0
         self.game_active = False
-        self.modo_bot = "Greedy"  # Modo por defecto
+        self.modo_bot = "Greedy"
         self.bloques_seleccionados_bot = set()
         self.timer_bot = None
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle('Bloques Game - BOT MULTI-ALGORITMO')
+        self.setWindowTitle('Bloques Game - MONITOREO DE BLOQUES')
         self.setFixedSize(545, 385)
         self.setStyleSheet("background-color: black; color: white;")
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
         self.tablero = TableroJuego(self)
 
-        # Panel lateral de estadísticas
+        # Panel lateral con dimensiones corregidas
         self.panel1 = QWidget(self.central_widget)
         self.panel1.setGeometry(362, 0, 183, 361)
         self.panel1.setStyleSheet("background-color: black; border-left: 1px solid #333;")
-        font_labels = QFont('MS Sans Serif', 11, QFont.Weight.Bold)
-        font_values = QFont('MS Sans Serif', 12, QFont.Weight.Bold)
 
+        font_labels = QFont('MS Sans Serif', 10, QFont.Weight.Bold)
+        font_values = QFont('MS Sans Serif', 11, QFont.Weight.Bold)
+
+        # 1. Indicador de Algoritmo
         self.label3 = QLabel('Algoritmo:', self.panel1)
-        self.label3.setGeometry(8, 8, 90, 24)
+        self.label3.setGeometry(8, 10, 85, 20)
         self.label3.setFont(font_labels)
         self.label3.setStyleSheet("color: red; border: none;")
 
@@ -91,21 +87,44 @@ class BloquesGame(QMainWindow):
         self.label_modo.setFont(font_values)
         self.label_modo.setStyleSheet("color: cyan; border: none;")
 
+        # 2. Indicador de Puntos Totales
         self.label1 = QLabel('Puntos:', self.panel1)
-        self.label1.setGeometry(8, 48, 71, 24)
+        self.label1.setGeometry(8, 45, 71, 20)
         self.label1.setFont(font_labels)
         self.label1.setStyleSheet("color: red; border: none;")
 
         self.label2 = QLabel('0', self.panel1)
-        self.label2.setGeometry(86, 48, 80, 24)
+        self.label2.setGeometry(86, 45, 80, 20)
         self.label2.setFont(font_values)
         self.label2.setStyleSheet("color: yellow; border: none;")
+
+        # NUEVO: 3. Contador de Bloques Eliminados en la última jugada
+        self.label_elim_titulo = QLabel('Eliminados:', self.panel1)
+        self.label_elim_titulo.setGeometry(8, 80, 95, 20)
+        self.label_elim_titulo.setFont(font_labels)
+        self.label_elim_titulo.setStyleSheet("color: red; border: none;")
+
+        self.label_elim_valor = QLabel('0', self.panel1)
+        self.label_elim_valor.setGeometry(110, 80, 60, 20)
+        self.label_elim_valor.setFont(font_values)
+        self.label_elim_valor.setStyleSheet("color: #FF55FF; border: none;")
+
+        # NUEVO: 4. Contador de Bloques Restantes vivos en el tablero
+        self.label_rest_titulo = QLabel('Restantes:', self.panel1)
+        self.label_rest_titulo.setGeometry(8, 115, 95, 20)
+        self.label_rest_titulo.setFont(font_labels)
+        self.label_rest_titulo.setStyleSheet("color: red; border: none;")
+
+        self.label_rest_valor = QLabel('100', self.panel1)
+        self.label_rest_valor.setGeometry(110, 115, 60, 20)
+        self.label_rest_valor.setFont(font_values)
+        self.label_rest_valor.setStyleSheet("color: #55FF55; border: none;")
 
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Listo - Elige un modo e inicia Nuevo")
 
-        # Configuración de la Barra de Menús
+        # Configuración de la Barra de Menús superiores
         menu_bar = self.menuBar()
         menu_archivo = menu_bar.addMenu('Archivo')
 
@@ -117,25 +136,15 @@ class BloquesGame(QMainWindow):
         action_salir.triggered.connect(self.close)
         menu_archivo.addAction(action_salir)
 
-        # NUEVO: Menú para cambiar el modo de la IA
         menu_modos = menu_bar.addMenu('Modo de Bot')
         grupo_modos = QActionGroup(self)
 
-        act_greedy = QAction('Greedy (Más Grande)', self, checkable=True)
-        act_greedy.setChecked(True)
-        act_greedy.triggered.connect(lambda: self.cambiar_modo("Greedy"))
-        grupo_modos.addAction(act_greedy)
-        menu_modos.addAction(act_greedy)
-
-        act_heuristico = QAction('Heurístico (Limpieza Baja)', self, checkable=True)
-        act_heuristico.triggered.connect(lambda: self.cambiar_modo("Heurístico"))
-        grupo_modos.addAction(act_heuristico)
-        menu_modos.addAction(act_heuristico)
-
-        act_random = QAction('Random (Aleatorio)', self, checkable=True)
-        act_random.triggered.connect(lambda: self.cambiar_modo("Random"))
-        grupo_modos.addAction(act_random)
-        menu_modos.addAction(act_random)
+        for modo in ["Greedy", "Heurístico", "Random"]:
+            act = QAction(modo, self, checkable=True)
+            if modo == "Greedy": act.setChecked(True)
+            act.triggered.connect(lambda checked, m=modo: self.cambiar_modo(m))
+            grupo_modos.addAction(act)
+            menu_modos.addAction(act)
 
     def cambiar_modo(self, nuevo_modo):
         self.modo_bot = nuevo_modo
@@ -144,7 +153,10 @@ class BloquesGame(QMainWindow):
 
     def button1_click(self):
         self.label2.setText('0')
+        self.label_elim_valor.setText('0')
+        self.label_rest_valor.setText('100')
         self.tot_puntos = 0
+        self.total_bloques_eliminados_partida = 0
         self.bloques_seleccionados_bot.clear()
         for i in range(10):
             for c in range(10):
@@ -178,13 +190,26 @@ class BloquesGame(QMainWindow):
         self.eliminar_recursivo_matriz(matriz, w, z + 1, target_val)
 
     def aplicar_fisicas_reales(self):
+        # 1. Gravedad vertical
         for c in range(10):
             col_filt = [self.MyArray[c][i] for i in range(10) if self.MyArray[c][i] != 0]
-            nueva_col = [0] * (10 - len(col_filt)) + col_filt
+            ceros_necesarios = 10 - len(col_filt)
+            nueva_col = [0] * ceros_necesarios + col_filt
             self.MyArray[c] = nueva_col
-        columnas_vivas = [self.MyArray[c] for c in range(10) if any(self.MyArray[c][i] != 0 for i in range(10))]
-        columnas_vivas += [[0] * 10 for _ in range(10 - len(columnas_vivas))]
-        for c in range(10): self.MyArray[c] = columnas_vivas[c]
+
+        # 2. Desplazamiento horizontal de columnas
+        columnas_vivas = []
+        for c in range(10):
+            if any(self.MyArray[c][i] != 0 for i in range(10)):
+                columnas_vivas.append(self.MyArray[c])
+
+        columnas_vaciadas = 10 - len(columnas_vivas)
+        for _ in range(columnas_vaciadas):
+            col_vacia = [0] * 10
+            columnas_vivas.append(col_vacia)
+
+        for c in range(10):
+            self.MyArray[c] = columnas_vivas[c]
 
     def contar_grupo_simulado(self, w, z, target_val, visitados):
         if w < 0 or w > 9 or z < 0 or z > 9: return 0
@@ -197,12 +222,25 @@ class BloquesGame(QMainWindow):
         count += self.contar_grupo_simulado(w, z + 1, target_val, visitados)
         return count
 
+    def actualizar_contadores_interfaz(self):
+        vivos = 0
+        for c in range(10):
+            for i in range(10):
+                if self.MyArray[c][i] != 0:
+                    vivos += 1
+
+        self.total_bloques_eliminados_partida += self.puntos_eliminados_ronda
+        self.label_elim_valor.setText(str(self.total_bloques_eliminados_partida))
+        self.label_rest_valor.setText(str(vivos))
+
     def finalizar_partida(self):
         self.timer_bot.stop()
         atrapadas = sum(1 for c in range(10) for i in range(10) if self.MyArray[c][i] != 0)
         self.game_active = False
+        self.label_rest_valor.setText(str(atrapadas))
         self.status_bar.showMessage(f"Fin. Método: {self.modo_bot} | Quedaron: {atrapadas}")
 
+    # LÓGICA DE SELECCIÓN RESISTENTE A BUCLES INFINITOS
     def ejecutar_ciclo_bot(self):
         if not self.game_active: return
         movimientos_validos = []
@@ -214,27 +252,18 @@ class BloquesGame(QMainWindow):
                     visitados_temp = set()
                     tamano = self.contar_grupo_simulado(c, i, val_actual, visitados_temp)
                     if tamano >= 2:
-                        # Estructura: (tamaño, fila_inferior, columna, conjunto_celdas)
                         movimientos_validos.append((tamano, i, c, visitados_temp))
 
         if not movimientos_validos:
             self.finalizar_partida()
             return
 
-        # SELECCIÓN DEL MOVIMIENTO SEGÚN EL MODO SELECCIONADO
+        # Selección segura usando max() con llaves de discriminación matemática únicas
         if self.modo_bot == "Greedy":
-            # Elige estrictamente el grupo con el tamaño más grande
-            movimientos_validos.sort(key=lambda x: x[0], reverse=True)
-            mejor = movimientos_validos[0]
-
+            mejor = max(movimientos_validos, key=lambda x: (x[0], x[1], x[2]))
         elif self.modo_bot == "Heurístico":
-            # Prioriza romper grupos que están más abajo en la pantalla (i alta)
-            # Esto ayuda a limpiar la base y provocar mejores caídas físicas
-            movimientos_validos.sort(key=lambda x: (x[1], x[0]), reverse=True)
-            mejor = movimientos_validos[0]
-
+            mejor = max(movimientos_validos, key=lambda x: (x[1], x[0], x[2]))
         elif self.modo_bot == "Random":
-            # Elige un grupo completamente al azar de entre los válidos
             mejor = random.choice(movimientos_validos)
 
         tamano_g, coord_i, coord_c, celdas_grupo = mejor
@@ -249,6 +278,8 @@ class BloquesGame(QMainWindow):
 
         self.calcular_puntuaje()
         self.aplicar_fisicas_reales()
+        self.actualizar_contadores_interfaz()
+
         self.bloques_seleccionados_bot.clear()
         self.tablero.update()
 
