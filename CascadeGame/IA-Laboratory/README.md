@@ -1,54 +1,30 @@
-# 🔬 Bloques Game - Laboratorio Experimental de IA
+# 🚀 Bloques Game - Inteligencia Artificial Avanzada (Look-Ahead Heuristic)
 
-Esta es la tercera fase y versión definitiva del proyecto. El sistema evoluciona de un entorno interactivo a un **banco de pruebas automatizado (*Benchmark*)** diseñado para auditar, recopilar estadísticas y comparar de forma masiva el rendimiento de tres algoritmos diferentes de toma de decisiones.
+Esta es la fase cumbre del laboratorio experimental. Tras descubrir en fases anteriores que el algoritmo aleatorio superaba a las lógicas básicas debido a la fragmentación prematura de la matriz, se desarrolló e implementó un motor predictivo basado en la **Heurística de Densidad, Conectividad y Descarte Estructural**.
 
-## 🚀 Características Avanzadas (Fase 3)
+## 🧠 Arquitectura de la IA Avanzada (`AdvHeuristic`)
 
-*   **Motor de Simulación en Segundo Plano:** El menú superior `Experimento -> Correr Benchmark` permite ejecutar **50 partidas consecutivas por cada algoritmo** (150 partidas en total). La simulación corre en memoria a la velocidad máxima del procesador, suspendiendo el renderizado gráfico para optimizar el cómputo.
-*   **Entorno de Pruebas Simétrico (Fair Testing):** Para garantizar un análisis matemáticamente justo, el sistema genera 50 matrices iniciales idénticas. Los tres algoritmos se enfrentan exactamente a los mismos escenarios aleatorios.
-*   **Discriminación Anti-Bucles:** Se implementó una lógica de selección absoluta mediante la función `max()` con llaves de desempate basadas en coordenadas indexadas. Esto previene que la IA se cicle en tableros altamente simétricos, evitando desbordamientos de memoria en entornos como PyCharm.
-*   **Persistencia de Analítica:** Al finalizar las 150 pruebas, el sistema procesa los promedios matemáticos y exporta automáticamente un archivo estructurado llamado `reporte_algoritmos.txt`.
+A diferencia de las aproximaciones *Greedy* o reactivas, este algoritmo utiliza un enfoque de **Búsqueda Prospectiva de Un Paso (1-Step Look-Ahead)**. Antes de consolidar un movimiento en el tablero real, la IA ejecuta el siguiente flujo predictivo en memoria:
 
-## 🤖 Algoritmos Evaluados
-
-1.  **Greedy (Codicioso):** Escanea el tablero y selecciona estrictamente el grupo de bloques adyacentes de mayor tamaño en el turno actual, buscando la recompensa exponencial inmediata.
-2.  **Heurístico (Limpieza de Cimientos):** Prioriza la destrucción de los grupos válidos ubicados en las filas más bajas del tablero (eje Y profundo), intentando desestabilizar la base para provocar caídas masivas uniformes.
-3.  **Random (Línea Base/Control):** Elige una combinación válida de al menos 2 bloques de forma completamente aleatoria, sirviendo como métrica de control frente a las decisiones lógicas.
+1. **Clonación del Entorno:** Duplica la matriz de 10x10 en un arreglo temporal y simula el colapso gravitatorio de la jugada candidata.
+2. **Cálculo de Conectividad de Color:** Evalúa el tablero resultante midiendo el tamaño de los nuevos grupos formados. Premia exponencialmente los cúmulos compactos para fomentar fusiones tardías: $\sum (\text{Tamaño del Grupo})^2$.
+3. **Filtro de Bloques Aislados:** Rastrea piezas que quedaron completamente solas (sin vecinos del mismo color), restando una penalización severa a la jugada ($-15$ puntos por bloque muerto).
+4. **Bono de Compresión Horizontal:** Premia los movimientos que logran vaciar por completo una columna ($+50$ puntos), compactando la matriz para unificar el espacio de juego.
 
 ---
 
-## 📊 Reporte Estadístico del Benchmark (50 Tests)
+## 📊 Reporte Científico Definitivo (50 Tests Simultáneos)
 
-Tras ejecutar el análisis masivo en segundo plano, se obtuvieron los siguientes resultados empíricos reales:
+El benchmark masivo en segundo plano enfrentó a los 4 algoritmos contra 50 escenarios de tableros idénticos, arrojando las siguientes métricas de rendimiento:
 
-| Algoritmo | Promedio de Puntos | Bloques Atrapados Promedio | Eficiencia en Limpieza |
+| Algoritmo | Puntos Promedio | Bloques Atrapados Promedio | Diagnóstico Técnico |
 | :--- | :---: | :---: | :--- |
-| **🤖 Random** | **8,468.0** | **18.20** | **Ganador Absoluto 🏆** |
-| **🤖 Greedy** | 7,888.0 | 22.44 | Rendimiento Medio |
-| **🤖 Heurístico** | 6,850.0 | 25.32 | Menor Eficiencia |
+| **🤖 AdvHeuristic** | **13,026.0** | **11.76** | **Dominancia Absoluta (Ganador) 🏆** |
+| **🤖 Random** | 8,198.0 | 19.16 | Línea de Control (Azar) |
+| **🤖 Greedy** | 7,732.0 | 23.16 | Optimización Cortoplacista Miope |
+| **🤖 Heurístico** | 6,716.0 | 24.34 | Fragmentación por Cimientos |
 
-### 🧠 Interpretación y Conclusiones Científicas
+### 🔬 Conclusiones Técnicas del Laboratorio
 
-Los datos arrojaron una anomalía de software fascinante que contradice la hipótesis inicial de diseño: **El Azar (*Random*) derrotó a ambas lógicas inteligentes.**
-
-1.  **La Paradoja del Azar (Efecto Homogeneización):** El algoritmo *Random* resultó ser el más eficiente en este entorno. Al destruir de manera caótica grupos pequeños distribuidos uniformemente por toda la matriz de 10x10, altera constantemente la estructura de las columnas. Esto provoca un "efecto cascada continuo" que, de forma involuntaria, junta bloques dispersos hacia las fases finales del juego, maximizando el descarte y dejando solo **18.20 bloques atrapados** en promedio.
-2.  **El Límite de la Heurística de Cimientos:** Forzar al bot a limpiar obsesivamente la base (filas inferiores) fragmenta la caída vertical de las columnas superiores de manera prematura. Esto impide que los bloques superiores se consoliden en cúmulos grandes antes de descender, aislando piezas individuales y elevando el estancamiento a **25.32 bloques atrapados** (el peor desempeño).
-3.  **La Miopía de Greedy:** Aunque el enfoque codicioso busca los picos altos de puntuación destruyendo masas gigantescas al inicio, carece de planificación a largo plazo. Una vez agotadas las estructuras masivas iniciales, deja zonas aisladas incapaces de reconectarse entre sí.
-
----
-
-## 🛠️ Requisitos y Ejecución
-
-1. **Instala PyQt6:**
-   ```bash
-   pip install PyQt6
-   ```
-
-2. **Ejecuta el laboratorio:**
-   ```bash
-   python CascadeGameAIExperiment.py
-   ```
-
-## 🔬 Metodología de Co-Creación
-
-Este software científico fue desarrollado bajo una metodología de **Pair Programming guiado por Inteligencia Artificial**. Como director del proyecto, coordiné el planteamiento de las variables analíticas, la detección de bucles de memoria y la interpretación de la paradoja estadística de los datos del benchmark. La IA actuó como copiloto técnico para resolver problemas de empaquetado de datos (`Starred expressions`) y estructurar los criterios de desempate en PyQt6.
+* **Victoria sobre el Azar:** La Heurística Avanzada logró superar al algoritmo *Random* incrementando el puntaje en un **58.8%** y reduciendo la ineficiencia de bloques atrapados en un **38.6%**. Esto valida que el diseño de funciones de costo que evalúan la "salud interna" del tablero mitiga el caos probabilístico.
+* **El Éxito de la Ecuación de Salud:** Penalizar los bloques aislados forzó a la IA a jugar con una estrategia de preservación, manteniendo el tablero unificado e induciendo reacciones en cadena masivas que aprovecharon los multiplicadores exponenciales de puntuación en las fases finales del juego.
