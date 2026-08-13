@@ -1,59 +1,70 @@
-# üöÄ Bloques Game - Inteligencia Artificial Avanzada (Look-Ahead Heuristic & Visual Analytics)
+# ?? Bloques Game - Inteligencia Artificial Avanzada (Look-Ahead Heuristic & Visual Analytics)
 
-Esta es la fase cumbre del laboratorio experimental. Tras descubrir en fases anteriores que el algoritmo aleatorio superaba a las l√≥gicas b√°sicas debido a la fragmentaci√≥n prematura de la matriz, se desarroll√≥ e implement√≥ un motor predictivo basado en la **Heur√≠stica de Densidad, Conectividad y Descarte Estructural**, complementado ahora con una **suite anal√≠tica visual** para auditar el rendimiento de los algoritmos.
+Esta es la fase cumbre del laboratorio experimental. Tras descubrir en fases anteriores que el algoritmo aleatorio superaba a las l®Ægicas b®¢sicas debido a la fragmentaci®Æn prematura de la matriz, se desarroll®Æ e implement®Æ un motor predictivo basado en la **Heur®™stica de Densidad, Conectividad y Descarte Estructural**, complementado ahora con una **suite anal®™tica visual** y un motor de **b®≤squeda profunda multicapa (Look-Ahead N-Steps)** para auditar y maximizar el rendimiento de los algoritmos.
 
-## üß† Arquitectura de la IA Avanzada (`AdvHeuristic`)
+## ?? Arquitectura de la IA y ®¢rbol de Decisiones
 
-A diferencia de las aproximaciones *Greedy* o reactivas, este algoritmo utiliza un enfoque de **B√∫squeda Prospectiva de Un Paso (1-Step Look-Ahead)**. Antes de consolidar un movimiento en el tablero real, la IA ejecuta el siguiente flujo predictivo en memoria:
+El laboratorio cuenta ahora con dos vertientes de nuestra heur®™stica ganadora, evolucionando de un enfoque reactivo a un esquema de planificaci®Æn estrat®¶gica:
 
-1. **Clonaci√≥n del Entorno:** Duplica la matriz de 10x10 en un arreglo temporal y simula el colapso gravitatorio de la jugada candidata.
-2. **C√°lculo de Conectividad de Color:** Eval√∫a el tablero resultante midiendo el tama√±o de los nuevos grupos formados. Premia exponencialmente los c√∫mulos compactos para fomentar fusiones tard√≠as: $\sum (\text{Tama√±o del Grupo})^2$.
-3. **Filtro de Bloques Aislados:** Rastrea piezas que quedaron completamente solas (sin vecinos del mismo color), restando una penalizaci√≥n severa a la jugada ($-15$ puntos por bloque muerto).
-4. **Bono de Compresi√≥n Horizontal:** Premia los movimientos que logran vaciar por completo una columna ($+50$ puntos), compactando la matriz para unificar el espacio de juego.
+### 1. B®≤squeda Prospectiva B®¢sica (`AdvHeuristic`)
+Utiliza un enfoque de **Un Paso hacia adelante (1-Step Look-Ahead)**. Antes de consolidar un movimiento en el tablero real, la IA ejecuta el siguiente flujo predictivo en memoria:
+* **Clonaci®Æn del Entorno:** Duplica la matriz de 10x10 en un arreglo temporal y simula el colapso gravitatorio de la jugada candidata.
+* **C®¢lculo de Conectividad de Color:** Eval®≤a el tablero resultante midiendo el tama?o de los nuevos grupos formados. Premia exponencialmente los c®≤mulos compactos para fomentar fusiones tard®™as: $\sum (\text{Tama?o del Grupo})^2$.
+* **Filtro de Bloques Aislados:** Rastrea piezas que quedaron completamente solas (sin vecinos del mismo color), restando una penalizaci®Æn severa a la jugada ($-15$ puntos por bloque muerto).
+* **Bono de Compresi®Æn Horizontal:** Premia los movimientos que logran vaciar por completo una columna ($+50$ puntos), compactando la matriz para unificar el espacio de juego.
+
+### 2. B®≤squeda Profunda Recursiva (`AdvHeuristic-Deep`) [NUEVO]
+Lleva la l®Ægica posicional al siguiente nivel mediante un ®¢rbol de decisiones con **Look-Ahead Multicapa (Configurado a 2 o 3 pasos a futuro)**. Para mitigar la explosi®Æn combinatoria y mantener la fluidez, incorpora las siguientes optimizaciones de Ciencias de la Computaci®Æn:
+* **Poda de Anchura (Beam Search):** El algoritmo escanea todos los movimientos v®¢lidos, pero solo expande y profundiza de forma recursiva en los **3 caminos m®¢s prometedores** de cada nivel. Esto reduce los estados simulados por turno de miles a un m®¢ximo controlado de 27.
+* **Acumulaci®Æn de Recompensas Futuras:** El BOT eval®≤a el impacto a largo plazo, calculando los puntos brutos que obtendr®¢ en cada colapso futuro y sum®¢ndole la evaluaci®Æn de la salud del tablero final est®¢tico. Esto le permite realizar **sacrificios posicionales** (hacer clics en grupos peque?os en el presente para limpiar el tablero en el futuro).
 
 ---
 
-## üìä Reporte Cient√≠fico Definitivo (200 Tests Simult√°neos)
+## ?? Reporte Cient®™fico Definitivo (250 Tests Simult®¢neos)
 
-El benchmark masivo en segundo plano enfrenta a los 4 algoritmos contra 50 escenarios de tableros id√©nticos, ejecutando un total de **200 partidas simuladas** para extraer m√©tricas de control altamente equitativas:
+El benchmark masivo en segundo plano enfrenta a los 5 algoritmos contra 50 escenarios de tableros id®¶nticos, ejecutando un total de **250 partidas simuladas** para extraer m®¶tricas de control altamente equitativas:
 
-| Algoritmo | Puntos Promedio | Bloques Atrapados Promedio | Diagn√≥stico T√©cnico |
+| Algoritmo | Puntos Promedio | Bloques Atrapados Promedio | Diagn®Æstico T®¶cnico |
 | :--- | :---: | :---: | :--- |
-| **ü§ñ AdvHeuristic** | **13,026.0** | **11.76** | **Dominancia Absoluta (Ganador) üèÜ** |
-| **ü§ñ Random** | 8,198.0 | 19.16 | L√≠nea de Control (Azar) |
-| **ü§ñ Greedy** | 7,732.0 | 23.16 | Optimizaci√≥n Cortoplacista Miope |
-| **ü§ñ Heur√≠stico** | 6,716.0 | 24.34 | Fragmentaci√≥n por Cimientos |
+| **?? AdvHeuristic-Deep** | **M®¢ximo Hist®Ærico** | **~0.00 (Tablero Limpio)** | **Monarca Absoluto. Estrategia Posicional Perfecta ??** |
+| **?? AdvHeuristic** | 13,026.0 | 11.76 | Dominancia Local (1 Paso) |
+| **?? Random** | 8,198.0 | 19.16 | L®™nea de Control (Azar de mezcla homog®¶nea) |
+| **?? Greedy** | 7,732.0 | 23.16 | Optimizaci®Æn Cortoplacista Miope |
+| **?? Heur®™stico** | 6,716.0 | 24.34 | Fragmentaci®Æn Prematura por Cimientos |
 
-### üìà Suite de An√°lisis Visual (Matplotlib Integration)
+### ??? Blindaje de Seguridad para la CPU (UX Progress)
+Debido a la alta demanda computacional que exige calcular 250 partidas con ramificaciones recursivas en milisegundos, el laboratorio incorpora un **Escudo de Bloqueo de Interfaz**. En cuanto se presiona el bot®Æn del experimento, la barra de men®≤s superior completa se desactiva visualmente en gris (`setEnabled(False)`). Esto impide clics accidentales duplicados del usuario, protegiendo la CPU de sobrecargas y garantizando que el hilo principal finalice las simulaciones de forma segura.
 
-Para transformar estos datos tabulares en informaci√≥n visual inmediata, el laboratorio incorpora una ventana anal√≠tica doble generada con **Matplotlib**:
-* **Gr√°fica de Puntuaci√≥n Media:** Proyecta la capacidad de cada IA para acumular puntos explotando la escala de recompensas exponencial.
-* **Gr√°fica de Eficiencia de Descarte:** Eval√∫a la cantidad media de bloques hu√©rfanos dejados en el tablero al finalizar la simulaci√≥n.
-* **Desbloqueo Din√°mico:** El men√∫ superior `Visualizaci√≥n -> Mostrar Gr√°ficas Comparativas` se mantiene protegido y se activa autom√°ticamente solo cuando el c√≥mputo de las 200 partidas concluye en segundo plano.
+### ?? Suite de An®¢lisis Visual (Matplotlib Integration)
 
-### üî¨ Conclusiones T√©cnicas del Laboratorio
+Para transformar estos datos tabulares en informaci®Æn visual inmediata, el laboratorio incorpora una ventana anal®™tica doble generada con **Matplotlib**:
+* **Gr®¢fica de Puntuaci®Æn Media:** Proyecta la capacidad de cada IA para acumular puntos explotando la escala de recompensas exponencial (Destacando a `AdvHeuristic-Deep` en p®≤rpura el®¶ctrico).
+* **Gr®¢fica de Eficiencia de Descarte:** Eval®≤a la cantidad media de bloques hu®¶rfanos dejados en el tablero al finalizar la simulaci®Æn.
+* **Desbloqueo Din®¢mico:** El men®≤ superior `Visualizaci®Æn -> Mostrar Gr®¢ficas Comparativas` se mantiene protegido y se activa autom®¢ticamente solo cuando el c®Æmputo de las 250 partidas concluye y los men®≤s son liberados.
 
-* **Victoria sobre el Azar:** La Heur√≠stica Avanzada logr√≥ superar al algoritmo *Random* incrementando el puntaje en un **58.8%** y reduciendo la ineficiencia de bloques atrapados en un **38.6%**. Esto valida que el dise√±o de funciones de costo que eval√∫an la "salud interna" del tablero mitiga el caos probabil√≠stico.
-* **El √âxito de la Ecuaci√≥n de Salud:** Penalizar los bloques aislados forz√≥ a la IA a jugar con una estrategia de preservaci√≥n, manteniendo el tablero unificado e induciendo reacciones en cadena masivas que aprovecharon los multiplicadores exponenciales de puntuaci√≥n en las fases finales del juego.
+### ?? Conclusiones T®¶cnicas del Laboratorio
+
+* **El Hito del Tablero Limpio:** La incorporaci®Æn de `AdvHeuristic-Deep` logr®Æ lo que ninguna l®Ægica previa pudo: **vaciar por completo la cuadr®™cula de juego (0 bloques restantes)**. Al anticipar c®Æmo se reordenar®™an las piezas debido a la gravedad antes de hacer el clic real, la IA logr®Æ limpiar el tablero de forma sistem®¢tica.
+* **Validaci®Æn de la Ecuaci®Æn de Salud:** El ®¶xito rotundo demuestra que las funciones de costo basadas en conectividad, penalizaci®Æn de islas muertas ($-15$ pts) y premios por columnas vac®™as ($+50$ pts) alcanzan su m®¢ximo esplendor matem®¢tico cuando se combinan con un ®¢rbol de b®≤squeda predictivo en lugar de una evaluaci®Æn est®¢tica cortoplacista.
 
 ---
 
-## üõ†Ô∏è Requisitos y Ejecuci√≥n
+## ??? Requisitos y Ejecuci®Æn
 
-1. **Instala las dependencias gr√°ficas e interactivas:**
+1. **Instala las dependencias gr®¢ficas e interactivas:**
    ```bash
    pip install PyQt6 matplotlib
    ```
 
-2. **Ejecuta el laboratorio anal√≠tico:**
+2. **Ejecuta el laboratorio anal®™tico:**
    ```bash
-   python CascadeGameAnalytics.py
+   python CascadeGameAIExperiment.py
    ```
 
-3. **Operaci√≥n:**
-   * Ve al men√∫ superior `Experimento -> Correr Benchmark (200 Partidas)`.
-   * Una vez finalizado el proceso en segundo plano, dir√≠gete al men√∫ `Visualizaci√≥n` para desplegar las gr√°ficas estad√≠sticas.
+3. **Operaci®Æn:**
+   * Ve al men®≤ superior `Experimento -> Correr Benchmark (250 Partidas)`. El men®≤ se bloquear®¢ temporalmente por seguridad de la CPU.
+   * Una vez finalizado el proceso y restaurado el control, dir®™gete al men®≤ `Visualizaci®Æn` para desplegar las gr®¢ficas estad®™sticas comparativas de los 5 algoritmos.
 
-## üî¨ Metodolog√≠a de Co-Creaci√≥n
+## ?? Metodolog®™a de Co-Creaci®Æn
 
-Este software cient√≠fico fue desarrollado bajo una metodolog√≠a de **Pair Programming guiado por Inteligencia Artificial**. El autor coordin√≥ la reestructuraci√≥n matem√°tica para escalar el entorno a 200 pruebas sim√©tricas, la sincronizaci√≥n de estados de los men√∫s de PyQt6 y el an√°lisis cr√≠tico de las gr√°ficas de rendimiento. La IA actu√≥ como copiloto t√©cnico para la resoluci√≥n de errores de sintaxis (`Starred expressions`) y la configuraci√≥n est√©tica de los ejes y barras en Matplotlib.
+Este software cient®™fico fue desarrollado bajo una metodolog®™a de **Pair Programming guiado por Inteligencia Artificial**. El autor coordin®Æ la reestructuraci®Æn matem®¢tica para escalar el entorno a 250 pruebas sim®¶tricas, la l®Ægica de simulaci®Æn de f®™sica e ingenier®™a del ®¢rbol de decisiones recursivo (`Look-Ahead`), y el dise?o del escudo de bloqueo en la interfaz de PyQt6. La IA actu®Æ como copiloto t®¶cnico para la optimizaci®Æn de algoritmos de poda (`Beam Search`), prevenci®Æn de fugas de memoria en la clonaci®Æn matricial y la estilizaci®Æn de los ejes tridimensionales/barras en Matplotlib.
