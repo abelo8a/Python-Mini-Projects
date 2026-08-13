@@ -25,35 +25,46 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # Seleccionar pieza humana (normal 2 o reina 4)
+        # 1. SELECCIONAR PIEZA HUMANA (Pieza normal = 2, Reina = 4)
         if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
 
-        # Ejecutar movimiento seleccionado
+        # 2. EJECUTAR MOVIMIENTO SELECCIONADO (CON NUEVO BARRIDO INTEGRADO)
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # Si fue un salto de captura, eliminar la pieza roja intermedia
-            if abs(fila - f_origen) == 2:
-                f_intermedia = int((fila + f_origen) // 2)
-                c_intermedia = int((col + c_origen) // 2)
-                self.main_window.MyBoard[f_intermedia][c_intermedia] = 0
+            # NUEVO BARRIDO: Detectar si fue un salto (distancia mayor a 1 cuadro)
+            if abs(fila - f_origen) > 1:
+                # Determinar el sentido del vector diagonal (-1 o 1)
+                paso_f = 1 if fila > f_origen else -1
+                paso_c = 1 if col > c_origen else -1
+
+                # Avanzar celda por celda escaneando la línea hasta dar con la pieza comida
+                f_scan = f_origen + paso_f
+                c_scan = c_origen + paso_c
+                while f_scan != fila and c_scan != col:
+                    if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
+                        self.main_window.MyBoard[f_scan][c_scan] = 0  # ¡Pieza eliminada!
+                        break
+                    f_scan += paso_f
+                    c_scan += paso_c
+
                 self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
                 self.main_window.actualizar_contadores_interfaz()
             else:
                 self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
 
-            # Trasladar ficha en la matriz
+            # Trasladar la ficha en la matriz real
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
-            # Evaluar si el movimiento genera una coronación
+            # Evaluar si el movimiento genera una coronación inmediata
             self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
-            # Limpiar selección y transferir turno al BOT
+            # Limpiar la memoria de selección y transferir el turno al BOT
             self.main_window.pieza_seleccionada = None
             self.main_window.movimientos_validos.clear()
             self.update()
@@ -220,6 +231,54 @@ class DamasGame(QMainWindow):
             self.MyBoard[fila][col] = 3
             self.status_bar.showMessage(f"👑 El BOT ha coronado una REINA en ({fila}, {col})")
 
+    def obtener_capturas_recursivas_reina(self, fila, col, visitados_piezas=None, vector_anterior=None):
+        """
+        NUEVO: Escanea de forma recursiva todos los saltos de combo para la Reina Voladora
+        impidiendo estrictamente regresar por el vector opuesto.
+        """
+        if visitados_piezas is None:
+            visitados_piezas = set()
+
+        saltos_validos = []
+        # Las 4 direcciones diagonales del espacio bidimensional
+        direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+        for df, dc in direcciones:
+            # REGLA DE NO-RETORNO: Bloquear el vector inverso exacto del salto anterior
+            if vector_anterior and (df == -vector_anterior[0] and dc == -vector_anterior[1]):
+                continue
+
+            pieza_enemiga_detectada = None
+            f_actual, c_actual = fila + df, col + dc
+
+            # Lanzar el rayo vectorial de la Reina Voladora
+            while 0 <= f_actual < 8 and 0 <= c_actual < 8:
+                val_celda = self.MyBoard[f_actual][c_actual]
+
+                if val_celda == 0:
+                    if pieza_enemiga_detectada:
+                        # Hemos encontrado una casilla de aterrizaje válida tras saltar al enemigo
+                        f_enemiga, c_enemiga = pieza_enemiga_detectada
+                        if (f_enemiga, c_enemiga) not in visitados_piezas:
+                            # Guardamos este salto válido
+                            saltos_validos.append({
+                                "destino": (f_actual, c_actual),
+                                "comida": (f_enemiga, c_enemiga),
+                                "vector": (df, dc)
+                            })
+                    # Si no hay enemigo aún, la reina sigue deslizándose por las celdas vacías
+                elif val_celda in (1, 3): # Enemigo detectado (Rojo normal o Reina)
+                    if pieza_enemiga_detectada:
+                        break # Bloqueo: No se pueden saltar dos piezas enemigas juntas
+                    pieza_enemiga_detectada = (f_actual, c_actual)
+                else:
+                    break # Bloqueo: Chocó con una pieza aliada propia
+
+                f_actual += df
+                c_actual += dc
+
+        return saltos_validos
+
     def actualizar_contadores_interfaz(self):
         """Escanea la matriz para calcular las bajas de forma exacta en tiempo real."""
         vivas_rojas = 0
@@ -240,21 +299,21 @@ class DamasGame(QMainWindow):
         self.label_bajas_bot.setText(f"{comidas_por_bot} / 12")
 
     def calcular_movimientos_validos_humano(self, fila, col):
+        """Calcula movimientos simples y saltos para peones (2) y Reinas Voladoras (4)."""
         self.movimientos_validos.clear()
         tipo_pieza = self.MyBoard[fila][col]
 
-        direcciones_fila = [-1] if tipo_pieza == 2 else [-1, 1]
-
-        for df in direcciones_fila:
-            f_simple = fila + df
-            if 0 <= f_simple < 8:
+        # 1. SI ES UN PEÓN NORMAL (Mantiene su lógica de corto alcance hacia arriba)
+        if tipo_pieza == 2:
+            f_simple = fila - 1
+            if f_simple >= 0:
                 for c_simple in [col - 1, col + 1]:
                     if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
                         self.movimientos_validos.append((f_simple, c_simple))
 
-            f_salto = fila + (df * 2)
-            f_intermedia = fila + df
-            if 0 <= f_salto < 8:
+            f_salto = fila - 2
+            f_intermedia = fila - 1
+            if f_salto >= 0:
                 for c_dir in [-1, 1]:
                     c_intermedia = col + c_dir
                     c_salto = col + (c_dir * 2)
@@ -262,6 +321,44 @@ class DamasGame(QMainWindow):
                         vecino = self.MyBoard[f_intermedia][c_intermedia]
                         if vecino in (1, 3) and self.MyBoard[f_salto][c_salto] == 0:
                             self.movimientos_validos.append((f_salto, c_salto))
+
+        # 2. SI ES UNA REINA VOLADORA (Nuevo rayo vectorial continuo a larga distancia)
+        elif tipo_pieza == 4:
+            # Las 4 direcciones diagonales posibles
+            direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+            for df, dc in direcciones:
+                f_actual = fila + df
+                c_actual = col + dc
+                pieza_enemiga_detectada = None
+
+                # Avanzar en línea recta diagonal hasta los límites del tablero
+                while 0 <= f_actual < 8 and 0 <= c_actual < 8:
+                    val_celda = self.MyBoard[f_actual][c_actual]
+
+                    if not pieza_enemiga_detectada:
+                        if val_celda == 0:
+                            # Casilla vacía en el camino: movimiento simple legal
+                            self.movimientos_validos.append((f_actual, c_actual))
+                        elif val_celda in (1, 3):
+                            # Encontró pieza enemiga: registrar posición y evaluar salto
+                            pieza_enemiga_detectada = (f_actual, c_actual)
+                        else:
+                            # Encontró pieza aliada: rayo bloqueado por completo
+                            break
+                    else:
+                        # Ya encontramos una pieza enemiga antes, ahora evaluamos dónde aterrizar
+                        if val_celda == 0:
+                            # ¡Aterrizaje libre! Se registra como salto de captura legal a larga distancia
+                            self.movimientos_validos.append((f_actual, c_actual))
+                            # En damas internacionales/españolas, tras pasar la pieza comida, la reina
+                            # puede elegir en cuál de las casillas vacías posteriores frenar su deslizamiento.
+                        else:
+                            # Si hay otra pieza inmediatamente detrás de la enemiga, el salto se bloquea
+                            break
+
+                    f_actual += df
+                    c_actual += dc
 
     def ejecutar_turno_bot(self):
         if not self.game_active:
