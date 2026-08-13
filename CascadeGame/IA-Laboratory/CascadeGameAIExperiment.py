@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QLabel, QStatusB
 from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QAction, QFont, QPainter, QColor, QPen, QBrush, QActionGroup
 
-# NUEVO: Importaciones necesarias para la renderización gráfica del análisis
+# Importaciones necesarias para la renderización gráfica del análisis
 import matplotlib.pyplot as plt
 
 
@@ -17,7 +17,7 @@ class TableroJuego(QWidget):
         self.setMouseTracking(True)
 
     def paintEvent(self, event):
-        if not self.main_window.game_active or self.main_window.modo_laboratorio: 
+        if not self.main_window.game_active or self.main_window.modo_laboratorio:
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -61,11 +61,11 @@ class BloquesGame(QMainWindow):
         self.total_bloques_eliminados_partida = 0
         self.game_active = False
         self.modo_bot = "AdvHeuristic"
+        self.profundidad_max = 2  # Configurable a 2 o 3 pasos para AdvHeuristic-Deep
         self.modo_laboratorio = False
         self.bloques_seleccionados_bot = set()
         self.timer_bot = None
 
-        # Estructura para almacenar los datos históricos del último benchmark
         self.ultimos_resultados_bench = None
         self.init_ui()
 
@@ -77,7 +77,6 @@ class BloquesGame(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.tablero = TableroJuego(self)
 
-        # Panel derecho de control y métricas
         self.panel1 = QWidget(self.central_widget)
         self.panel1.setGeometry(362, 0, 183, 361)
         self.panel1.setStyleSheet("background-color: black; border-left: 1px solid #333;")
@@ -125,12 +124,10 @@ class BloquesGame(QMainWindow):
         self.label_rest_valor.setFont(font_values)
         self.label_rest_valor.setStyleSheet("color: #55FF55; border: none;")
 
-        # CORRECCIÓN TÉCNICA: Actualizado a 200 partidas analizadas
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Listo - Menú Experimento para simular 200 partidas")
+        self.status_bar.showMessage("Listo - Menú Experimento para simular 250 partidas")
 
-        # Configuración de menús superiores
         menu_bar = self.menuBar()
         menu_archivo = menu_bar.addMenu('Archivo')
 
@@ -144,7 +141,8 @@ class BloquesGame(QMainWindow):
 
         menu_modos = menu_bar.addMenu('Modo de Bot')
         grupo_modos = QActionGroup(self)
-        for modo in ["AdvHeuristic", "Greedy", "Heurístico", "Random"]:
+
+        for modo in ["AdvHeuristic", "AdvHeuristic-Deep", "Greedy", "Heurístico", "Random"]:
             act = QAction(modo, self, checkable=True)
             if modo == "AdvHeuristic": act.setChecked(True)
             act.triggered.connect(lambda checked, m=modo: self.cambiar_modo(m))
@@ -152,14 +150,13 @@ class BloquesGame(QMainWindow):
             menu_modos.addAction(act)
 
         menu_lab = menu_bar.addMenu('Experimento')
-        # CORRECCIÓN TÉCNICA: Actualizado el texto descriptivo de la acción
-        action_bench = QAction('Correr Benchmark (200 Partidas)', self)
+        action_bench = QAction('Correr Benchmark (250 Partidas)', self)
         action_bench.triggered.connect(self.ejecutar_benchmark)
         menu_lab.addAction(action_bench)
 
         self.menu_visualizacion = menu_bar.addMenu('Visualización')
         self.action_graficar = QAction('Mostrar Gráficas Comparativas', self)
-        self.action_graficar.setEnabled(False)  # Bloqueado hasta que existan datos reales
+        self.action_graficar.setEnabled(False)
         self.action_graficar.triggered.connect(self.mostrar_graficas_analiticas)
         self.menu_visualizacion.addAction(self.action_graficar)
 
@@ -167,7 +164,6 @@ class BloquesGame(QMainWindow):
         self.modo_bot = nuevo_modo
         self.label_modo.setText(nuevo_modo)
         self.status_bar.showMessage(f"Modo cambiado a: {nuevo_modo}")
-
     def button1_click(self):
         self.label2.setText('0')
         self.label_elim_valor.setText('0')
@@ -188,12 +184,16 @@ class BloquesGame(QMainWindow):
         if not self.timer_bot.isActive():
             self.timer_bot.start(1000)
 
-    def calcular_puntuaje(self):
+    def calcular_puntuaje_estatico(self, bloques_eliminados):
         tabla_puntos = {2: 100, 3: 200, 4: 400, 5: 700, 6: 1100, 7: 1600,
                         8: 2200, 9: 2900, 10: 3700, 11: 4600, 12: 5600}
-        puntos = tabla_puntos.get(self.puntos_eliminados_ronda, 0)
-        if self.puntos_eliminados_ronda > 12:
-            puntos = 5600 + (self.puntos_eliminados_ronda - 12) * 1200
+        puntos = tabla_puntos.get(bloques_eliminados, 0)
+        if bloques_eliminados > 12:
+            puntos = 5600 + (bloques_eliminados - 12) * 1200
+        return puntos
+
+    def calcular_puntuaje(self):
+        puntos = self.calcular_puntuaje_estatico(self.puntos_eliminados_ronda)
         self.tot_puntos += puntos
         if not self.modo_laboratorio:
             self.label2.setText(str(self.tot_puntos))
@@ -242,30 +242,61 @@ class BloquesGame(QMainWindow):
         if not self.modo_laboratorio: self.timer_bot.stop()
         self.game_active = False
 
-    def evaluar_tablero_futuro(self, c_origen, i_origen, target_val):
-        matriz_temp = [fila[:] for fila in self.MyArray]
-        self.puntos_eliminados_ronda = 0
-        self.eliminar_recursivo_matriz(matriz_temp, c_origen, i_origen, target_val)
-        self.aplicar_fisicas_en_matriz(matriz_temp)
+    def evaluar_tablero_estatico(self, matriz):
         visitados_globales = set()
         conectividad_total = 0
         bloques_aislados = 0
         columnas_vacias = 0
+
         for c in range(10):
-            if all(matriz_temp[c][i] == 0 for i in range(10)):
+            if all(matriz[c][i] == 0 for i in range(10)):
                 columnas_vacias += 1
                 continue
             for i in range(10):
-                val = matriz_temp[c][i]
+                val = matriz[c][i]
                 if val != 0 and (c, i) not in visitados_globales:
                     visitados_grupo = set()
-                    tam_grupo = self.contar_grupo_simulado(c, i, val, visitados_grupo, matriz_temp)
+                    tam_grupo = self.contar_grupo_simulado(c, i, val, visitados_grupo, matriz)
                     visitados_globales.update(visitados_grupo)
                     if tam_grupo == 1:
                         bloques_aislados += 1
                     else:
                         conectividad_total += (tam_grupo * tam_grupo)
         return conectividad_total - (bloques_aislados * 15) + (columnas_vacias * 50)
+
+    def evaluar_tablero_futuro(self, matriz_inicial, c_origen, i_origen, target_val, depth):
+        matriz_temp = [fila[:] for fila in matriz_inicial]
+        self.puntos_eliminados_ronda = 0
+        self.eliminar_recursivo_matriz(matriz_temp, c_origen, i_origen, target_val)
+        self.aplicar_fisicas_en_matriz(matriz_temp)
+
+        puntos_obtenidos = self.calcular_puntuaje_estatico(self.puntos_eliminados_ronda)
+
+        movimientos_futuros = []
+        for c in range(10):
+            for i in range(10):
+                val_f = matriz_temp[c][i]
+                if val_f != 0:
+                    visitados_f = set()
+                    tamano_f = self.contar_grupo_simulado(c, i, val_f, visitados_f, matriz_temp)
+                    if tamano_f >= 2:
+                        movimientos_futuros.append((tamano_f, i, c, val_f))
+
+        if depth <= 1 or not movimientos_futuros:
+            heuristica_estatica = self.evaluar_tablero_estatico(matriz_temp)
+            return puntos_obtenidos + heuristica_estatica
+
+        movimientos_futuros.sort(key=lambda x: (x, x, x), reverse=True)
+        mejores_futuros = movimientos_futuros[:3]
+
+        mejor_valor_futuro = -float('inf')
+        for mf in mejores_futuros:
+            tam_f, coord_i_f, coord_c_f, val_f = mf
+            valor_camino = self.evaluar_tablero_futuro(matriz_temp, coord_c_f, coord_i_f, val_f, depth - 1)
+            if valor_camino > mejor_valor_futuro:
+                mejor_valor_futuro = valor_camino
+
+        return puntos_obtenidos + mejor_valor_futuro
 
     def ejecutar_ciclo_bot(self):
         if not self.game_active: return
@@ -284,7 +315,13 @@ class BloquesGame(QMainWindow):
 
         if self.modo_bot == "AdvHeuristic":
             mejor = max(movimientos_validos,
-                        key=lambda x: (self.evaluar_tablero_futuro(x[2], x[1], self.MyArray[x[2]][x[1]]), x[0], x[1]))
+                        key=lambda x: (
+                            self.evaluar_tablero_futuro(self.MyArray, x[2], x[1], self.MyArray[x[2]][x[1]], 1), x[0],
+                            x[1]))
+        elif self.modo_bot == "AdvHeuristic-Deep":
+            mejor = max(movimientos_validos,
+                        key=lambda x: (self.evaluar_tablero_futuro(self.MyArray, x[2], x[1], self.MyArray[x[2]][x[1]],
+                                                                   self.profundidad_max), x[0], x[1]))
         elif self.modo_bot == "Greedy":
             mejor = max(movimientos_validos, key=lambda x: (x[0], x[1], x[2]))
         elif self.modo_bot == "Heurístico":
@@ -302,12 +339,22 @@ class BloquesGame(QMainWindow):
         self.tablero.update()
 
     def ejecutar_benchmark(self):
-        self.status_bar.showMessage("Ejecutando benchmark de 200 partidas...")
+        # 1. BLOQUEO DE SEGURIDAD: Deshabilitar barra de menús por completo
+        menu_bar = self.menuBar()
+        for action in menu_bar.actions():
+            action.setEnabled(False)
+
+        self.status_bar.showMessage("Ejecutando benchmark de 250 partidas... INTERFAZ BLOQUEADA POR SEGURIDAD.")
+
+        # Forzar a PyQt6 a pintar el bloqueo visual antes de congelar la CPU con los cálculos
         QApplication.processEvents()
+
         self.modo_laboratorio = True
 
         tableros_prueba = [[[random.randint(3, 7) for _ in range(10)] for _ in range(10)] for _ in range(50)]
+
         self.ultimos_resultados_bench = {"AdvHeuristic": {"puntos": [], "sobrantes": []},
+                                         "AdvHeuristic-Deep": {"puntos": [], "sobrantes": []},
                                          "Greedy": {"puntos": [], "sobrantes": []},
                                          "Heurístico": {"puntos": [], "sobrantes": []},
                                          "Random": {"puntos": [], "sobrantes": []}}
@@ -326,10 +373,17 @@ class BloquesGame(QMainWindow):
                 self.ultimos_resultados_bench[algoritmo]["puntos"].append(self.tot_puntos)
                 self.ultimos_resultados_bench[algoritmo]["sobrantes"].append(sobrantes)
 
+        # 2. LIBERACIÓN DE SEGURIDAD: El benchmark terminó
         self.modo_laboratorio = False
-        self.action_graficar.setEnabled(True)  # Se habilita la opción de graficar
+
+        # Reactivar todos los menús superiores para devolver el control al usuario
+        for action in menu_bar.actions():
+            action.setEnabled(True)
+
+        # Habilitar la opción de graficar
+        self.action_graficar.setEnabled(True)
         self.cambiar_modo("AdvHeuristic")
-        self.status_bar.showMessage("¡Benchmark completado! Menú 'Visualización' habilitado.")
+        self.status_bar.showMessage("¡Benchmark completado con éxito! Menús desbloqueados.")
 
     def mostrar_graficas_analiticas(self):
         if not self.ultimos_resultados_bench: return
@@ -338,20 +392,22 @@ class BloquesGame(QMainWindow):
         prom_puntos = [sum(self.ultimos_resultados_bench[a]["puntos"]) / 50 for a in algoritmos]
         prom_sobrantes = [sum(self.ultimos_resultados_bench[a]["sobrantes"]) / 50 for a in algoritmos]
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5))
-        fig.suptitle("Análisis Comparativo del Rendimiento de las IA (200 Tests)", fontsize=14, weight='bold')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle("Análisis Comparativo del Rendimiento de las IA (250 Tests)", fontsize=14, weight='bold')
 
-        colores_puntos = ['#00E5FF', '#FFD700', '#FF3D00', '#9E9E9E']
-        ax1.bar(algoritmos, prom_puntos, color=colores_puntos, edgecolor='black', width=0.6)
+        colores_puntos = ['#00E5FF', '#AA00FF', '#FFD700', '#FF3D00', '#9E9E9E']
+        ax1.bar(algoritmos, prom_puntos, color=colores_puntos, edgecolor='black', width=0.5)
         ax1.set_title("Puntuación Promedio Alcanzada (Mayor es mejor)")
         ax1.set_ylabel("Puntos")
         ax1.grid(axis='y', linestyle='--', alpha=0.5)
+        ax1.tick_params(axis='x', rotation=15)
 
-        colores_sobrantes = ['#00E676', '#FFEA00', '#FF1744', '#757575']
-        ax2.bar(algoritmos, prom_sobrantes, color=colores_sobrantes, edgecolor='black', width=0.6)
+        colores_sobrantes = ['#00E676', '#7B1FA2', '#FFEA00', '#FF1744', '#757575']
+        ax2.bar(algoritmos, prom_sobrantes, color=colores_sobrantes, edgecolor='black', width=0.5)
         ax2.set_title("Bloques Atrapados Promedio (Menor es mejor)")
         ax2.set_ylabel("Cantidad de Bloques")
         ax2.grid(axis='y', linestyle='--', alpha=0.5)
+        ax2.tick_params(axis='x', rotation=15)
 
         plt.tight_layout()
         plt.show()
@@ -362,4 +418,3 @@ if __name__ == '__main__':
     game = BloquesGame()
     game.show()
     sys.exit(app.exec())
-
