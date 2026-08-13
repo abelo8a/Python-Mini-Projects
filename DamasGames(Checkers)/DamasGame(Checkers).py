@@ -14,7 +14,7 @@ class TableroDamas(QWidget):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        """Maneja el turno del jugador humano apoyando piezas normales (2) y Reinas (4)."""
+        """Maneja el turno del humano con soporte de combos múltiples encadenados y no-retorno."""
         if not self.main_window.game_active or self.main_window.turno_actual != "HUMANO":
             return
 
@@ -25,50 +25,120 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # 1. SELECCIONAR PIEZA HUMANA (Pieza normal = 2, Reina = 4)
+        # --- CASO A: EL JUGADOR YA ESTÁ EN MEDIO DE UN COMBO DE CAPTURA ---
+        if self.main_window.en_combo_captura:
+            # Si hace clic en uno de los destinos verdes del combo
+            if (fila, col) in self.main_window.movimientos_validos:
+                f_origen, c_origen = self.main_window.pieza_en_combo
+                valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
+
+                # 1. Calcular el vector que acaba de usar para este salto
+                df_usado = 1 if fila > f_origen else -1
+                dc_usado = 1 if col > c_origen else -1
+
+                # 2. Barrido diagonal para eliminar la pieza roja intermedia comida
+                f_scan = f_origen + df_usado
+                c_scan = c_origen + dc_usado
+                while f_scan != fila and c_scan != col:
+                    if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
+                        self.main_window.MyBoard[f_scan][c_scan] = 0
+                        break
+                    f_scan += df_usado
+                    c_scan += dc_usado
+
+                # 3. Trasladar la ficha físicamente en la matriz
+                self.main_window.MyBoard[fila][col] = valor_pieza
+                self.main_window.MyBoard[f_origen][c_origen] = 0
+                self.main_window.actualizar_contadores_interfaz()
+
+                # 4. Evaluar si se corona (Al coronarse en fila 0, el combo reglamentariamente termina)
+                if valor_pieza == 2 and fila == 0:
+                    self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                    self.main_window.en_combo_captura = False
+                    self.main_window.pieza_en_combo = None
+                    self.main_window.ultimo_vector_salto = None
+                    self.main_window.movimientos_validos.clear()
+                    self.update()
+                    self.main_window.cambiar_turno("BOT")
+                    return
+
+                # 5. Escanear si desde esta nueva posición hay MÁS saltos válidos
+                # Le pasamos el vector inverso para prohibir el regreso hacia atrás
+                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
+                                                                               vector_prohibido=(-df_usado, -dc_usado))
+
+                if saltos_siguientes:
+                    # El combo continúa: bloqueamos la pieza en su nueva casilla
+                    self.main_window.pieza_en_combo = (fila, col)
+                    self.main_window.pieza_seleccionada = (fila, col)
+                    self.main_window.movimientos_validos = saltos_siguientes
+                    self.main_window.status_bar.showMessage("¡Combo activo! Continúa capturando las piezas indicadas.")
+                else:
+                    # El combo terminó de forma natural: limpiamos y va el BOT
+                    self.main_window.en_combo_captura = False
+                    self.main_window.pieza_en_combo = None
+                    self.main_window.ultimo_vector_salto = None
+                    self.main_window.pieza_seleccionada = None
+                    self.main_window.movimientos_validos.clear()
+                    self.update()
+                    self.main_window.cambiar_turno("BOT")
+            return
+
+        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER MOVIMIENTO DEL TURNO) ---
         if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
 
-        # 2. EJECUTAR MOVIMIENTO SELECCIONADO (CON NUEVO BARRIDO INTEGRADO)
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # NUEVO BARRIDO: Detectar si fue un salto (distancia mayor a 1 cuadro)
+            # Detectar si fue un salto de captura
             if abs(fila - f_origen) > 1:
-                # Determinar el sentido del vector diagonal (-1 o 1)
-                paso_f = 1 if fila > f_origen else -1
-                paso_c = 1 if col > c_origen else -1
+                df_usado = 1 if fila > f_origen else -1
+                dc_usado = 1 if col > c_origen else -1
 
-                # Avanzar celda por celda escaneando la línea hasta dar con la pieza comida
-                f_scan = f_origen + paso_f
-                c_scan = c_origen + paso_c
+                f_scan = f_origen + df_usado
+                c_scan = c_origen + dc_usado
                 while f_scan != fila and c_scan != col:
                     if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
-                        self.main_window.MyBoard[f_scan][c_scan] = 0  # ¡Pieza eliminada!
+                        self.main_window.MyBoard[f_scan][c_scan] = 0
                         break
-                    f_scan += paso_f
-                    c_scan += paso_c
+                    f_scan += df_usado
+                    c_scan += dc_usado
 
-                self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
+                self.main_window.MyBoard[fila][col] = valor_pieza
+                self.main_window.MyBoard[f_origen][c_origen] = 0
                 self.main_window.actualizar_contadores_interfaz()
+                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+
+                # TRAS EL PRIMER SALTO: Escanear si nace un combo múltiple obligatorio
+                # Calculamos el vector inverso para la regla de no-retorno
+                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
+                                                                               vector_prohibido=(-df_usado, -dc_usado))
+
+                if saltos_siguientes:
+                    # Activamos el estado de combo y congelamos la interfaz
+                    self.main_window.en_combo_captura = True
+                    self.main_window.pieza_en_combo = (fila, col)
+                    self.main_window.pieza_seleccionada = (fila, col)
+                    self.main_window.movimientos_validos = saltos_siguientes
+                    self.main_window.status_bar.showMessage(
+                        "¡Captura múltiple detectada! Tienes 3 segundos para continuar.")
+                    self.update()
+                    # Nota: El temporizador de 3s de la Fase 3 se acoplará exactamente aquí abajo
+                    return
             else:
-                self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
+                # Movimiento simple regular sin saltos
+                self.main_window.MyBoard[fila][col] = valor_pieza
+                self.main_window.MyBoard[f_origen][c_origen] = 0
+                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
-            # Trasladar la ficha en la matriz real
-            self.main_window.MyBoard[fila][col] = valor_pieza
-            self.main_window.MyBoard[f_origen][c_origen] = 0
-
-            # Evaluar si el movimiento genera una coronación inmediata
-            self.main_window.evaluar_coronacion(fila, col, valor_pieza)
-
-            # Limpiar la memoria de selección y transferir el turno al BOT
+            # Cierre de turno normal
             self.main_window.pieza_seleccionada = None
             self.main_window.movimientos_validos.clear()
             self.update()
-
             self.main_window.cambiar_turno("BOT")
 
         else:
@@ -154,6 +224,11 @@ class DamasGame(QMainWindow):
         self.pieza_seleccionada = None
         self.movimientos_validos = []
         self.turno_actual = "HUMANO"
+
+        # NUEVAS: Variables para el control de combos encadenados
+        self.en_combo_captura = False
+        self.pieza_en_combo = None      # Guardará la tupla (fila, col) de la ficha bloqueada
+        self.ultimo_vector_salto = None # Guardará (df, dc) para calcular el no-retorno
 
         self.init_board_setup()
         self.init_ui()
@@ -427,6 +502,61 @@ class DamasGame(QMainWindow):
 
         self.tablero.update()
         self.cambiar_turno("HUMANO")
+
+    def calcular_saltos_continuos(self, fila, col, vector_prohibido=None):
+        """
+        NUEVO: Escanea si una pieza (normal o Reina) tiene capturas encadenadas
+        disponibles desde su posición actual, bloqueando el retorno inverso.
+        """
+        saltos_encontrados = []
+        tipo_pieza = self.MyBoard[fila][col]
+
+        # Configurar direcciones base según el tipo de pieza
+        if tipo_pieza == 2:    # Peón blanco: solo sube (-1)
+            direcciones = [(-1, -1), (-1, 1)]
+        elif tipo_pieza == 4:  # Reina blanca: se mueve en las 4 direcciones
+            direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        else:
+            return []
+
+        for df, dc in direcciones:
+            # REGLA DE NO-RETORNO: Si coincide con el vector opuesto exacto, se ignora
+            if vector_prohibido and (df == vector_prohibido[0] and dc == vector_prohibido[1]):
+                continue
+
+            # Escaneo de largo alcance para Reina (4) o corto alcance para Peón (2)
+            if tipo_pieza == 4:
+                f_actual = fila + df
+                c_actual = col + dc
+                enemigo_detectado = None
+
+                while 0 <= f_actual < 8 and 0 <= c_actual < 8:
+                    val_celda = self.MyBoard[f_actual][c_actual]
+                    if not enemigo_detectado:
+                        if val_celda in (1, 3):  # Encontró pieza enemiga roja
+                            enemigo_detectado = (f_actual, c_actual)
+                        elif val_celda != 0:     # Chocó con pieza aliada
+                            break
+                    else:
+                        if val_celda == 0:       # Casilla de aterrizaje libre tras el enemigo
+                            saltos_encontrados.append((f_actual, c_actual))
+                        else:
+                            break  # Bloqueado por otra pieza detrás del enemigo
+                    f_actual += df
+                    c_actual += dc
+            else:
+                # Lógica de salto de corto alcance para el peón normal (2)
+                f_intermedia = fila + df
+                f_salto = fila + (df * 2)
+                c_intermedia = col + dc
+                c_salto = col + (dc * 2)
+
+                if 0 <= f_salto < 8 and 0 <= c_salto < 8:
+                    if self.MyBoard[f_intermedia][c_intermedia] in (1, 3) and self.MyBoard[f_salto][c_salto] == 0:
+                        saltos_encontrados.append((f_salto, c_salto))
+
+        return saltos_encontrados
+
 
 
 if __name__ == '__main__':
