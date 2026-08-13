@@ -13,7 +13,7 @@ class TableroDamas(QWidget):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        """Maneja el turno del jugador humano (Fichas Blancas = 2)."""
+        """Maneja el turno del jugador humano apoyando piezas normales (2) y Reinas (4)."""
         if not self.main_window.game_active or self.main_window.turno_actual != "HUMANO":
             return
 
@@ -24,29 +24,29 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # 1. SELECCIONAR PIEZA BLANCA
-        if self.main_window.MyBoard[fila][col] == 2:
+        # SINTAXIS CORREGIDA: Tupla explícita para evitar pérdidas de texto
+        if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
 
-        # 2. EJECUTAR MOVIMIENTO SELECCIONADO
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # Si fue un salto de captura, eliminar la pieza roja intermedia
             if abs(fila - f_origen) == 2:
                 f_intermedia = int((fila + f_origen) // 2)
                 c_intermedia = int((col + c_origen) // 2)
                 self.main_window.MyBoard[f_intermedia][c_intermedia] = 0
                 self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
+            else:
+                self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
 
-            # Trasladar ficha en la matriz
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
-            # Limpiar selección y transferir turno al BOT
+            self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+
             self.main_window.pieza_seleccionada = None
             self.main_window.movimientos_validos.clear()
             self.update()
@@ -66,7 +66,6 @@ class TableroDamas(QWidget):
         box_size = 50
         radius = box_size / 2
 
-        # 1. DIBUJAR CASILLAS
         for fila in range(8):
             for col in range(8):
                 bg_color = QColor(240, 217, 181) if (fila + col) % 2 == 0 else QColor(181, 136, 99)
@@ -74,25 +73,23 @@ class TableroDamas(QWidget):
                 painter.setBrush(QBrush(bg_color))
                 painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
 
-                # Resaltado azul de pieza seleccionada
                 if self.main_window.pieza_seleccionada == (fila, col):
                     painter.setBrush(QBrush(QColor(0, 255, 255, 80)))
                     painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
 
-                # Resaltado verde de movimientos posibles
                 if (fila, col) in self.main_window.movimientos_validos:
                     painter.setBrush(QBrush(QColor(0, 255, 0, 100)))
                     painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
 
-                # 2. DIBUJAR PIEZAS
                 pieza = self.main_window.MyBoard[fila][col]
                 if pieza == 0:
                     continue
 
-                if pieza == 1:  # Rojas
+                # SINTAXIS CORREGIDA: Tuplas para mapeo de colores por bando
+                if pieza in (1, 3):  # Rojas (Normal = 1, Reina = 3)
                     color_pieza = QColor(200, 20, 20)
                     color_borde = QColor(100, 5, 5)
-                elif pieza == 2:  # Blancas
+                elif pieza in (2, 4):  # Blancas (Normal = 2, Reina = 4)
                     color_pieza = QColor(240, 240, 240)
                     color_borde = QColor(150, 150, 150)
 
@@ -108,8 +105,28 @@ class TableroDamas(QWidget):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(QPoint(center_x, center_y), int(radio_pieza * 0.6), int(radio_pieza * 0.6))
 
+                # SINTAXIS CORREGIDA: Corona dorada para Reinas (valores 3 o 4)
+                if pieza in (3, 4):
+                    painter.setPen(QPen(QColor(218, 165, 32), 2))
+                    painter.setBrush(QBrush(QColor(255, 215, 0)))
+
+                    puntos_corona = [
+                        QPoint(center_x - 10, center_y + 6),
+                        QPoint(center_x - 12, center_y - 6),
+                        QPoint(center_x - 4, center_y + 0),
+                        QPoint(center_x + 0, center_y - 10),
+                        QPoint(center_x + 4, center_y + 0),
+                        QPoint(center_x + 12, center_y - 6),
+                        QPoint(center_x + 10, center_y + 6),
+                    ]
+                    painter.drawPolygon(puntos_corona)
+
         painter.end()
 
+
+# =====================================================================
+# SEGUNDA PARTE: CLASE PRINCIPAL, CORONACIÓN E IA DEL BOT
+# =====================================================================
 
 class DamasGame(QMainWindow):
     def __init__(self):
@@ -125,18 +142,20 @@ class DamasGame(QMainWindow):
         self.init_ui()
 
     def init_board_setup(self):
+        # Fichas Rojas (IA): Primeras 3 filas
         for fila in range(3):
             for col in range(8):
                 if (fila + col) % 2 != 0:
                     self.MyBoard[fila][col] = 1
 
+        # Fichas Blancas (Humano): Últimas 3 filas
         for fila in range(5, 8):
             for col in range(8):
                 if (fila + col) % 2 != 0:
                     self.MyBoard[fila][col] = 2
 
     def init_ui(self):
-        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.2')
+        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.3')
         self.setFixedSize(580, 425)
         self.setStyleSheet("background-color: #1a1a1a; color: white;")
 
@@ -149,7 +168,6 @@ class DamasGame(QMainWindow):
         self.status_bar.showMessage("Tu turno (Fichas Blancas). Elige una pieza.")
 
     def cambiar_turno(self, nuevo_turno):
-        """Alterna el control del juego e invoca el delay del BOT."""
         self.turno_actual = nuevo_turno
         if nuevo_turno == "BOT":
             self.status_bar.showMessage("El BOT Rojo está pensando...")
@@ -157,71 +175,84 @@ class DamasGame(QMainWindow):
         else:
             self.status_bar.showMessage("Tu turno (Fichas Blancas).")
 
+    def evaluar_coronacion(self, fila, col, bando):
+        if bando == 2 and fila == 0:
+            self.MyBoard[fila][col] = 4
+            self.status_bar.showMessage(f"👑 ¡Tu pieza se ha coronado como REINA en ({fila}, {col})!")
+        elif bando == 1 and fila == 7:
+            self.MyBoard[fila][col] = 3
+            self.status_bar.showMessage(f"👑 El BOT ha coronado una REINA en ({fila}, {col})")
+
     def calcular_movimientos_validos_humano(self, fila, col):
-        """Calcula las diagonales superiores válidas y capturas del Humano."""
         self.movimientos_validos.clear()
+        tipo_pieza = self.MyBoard[fila][col]
 
-        # Movimiento simple (Blanco sube: fila - 1)
-        f_simple = fila - 1
-        if f_simple >= 0:
-            for c_simple in [col - 1, col + 1]:
-                if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
-                    self.movimientos_validos.append((f_simple, c_simple))
+        direcciones_fila = [-1] if tipo_pieza == 2 else [-1, 1]
 
-        # Capturas (Blanco salta 2 casillas)
-        f_salto = fila - 2
-        f_intermedia = fila - 1
-        if f_salto >= 0:
-            for c_dir in [-1, 1]:
-                c_intermedia = col + c_dir
-                c_salto = col + (c_dir * 2)
-                if 0 <= c_salto < 8:
-                    if self.MyBoard[f_intermedia][c_intermedia] == 1 and self.MyBoard[f_salto][c_salto] == 0:
-                        self.movimientos_validos.append((f_salto, c_salto))
+        for df in direcciones_fila:
+            f_simple = fila + df
+            if 0 <= f_simple < 8:
+                for c_simple in [col - 1, col + 1]:
+                    if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
+                        self.movimientos_validos.append((f_simple, c_simple))
+
+            f_salto = fila + (df * 2)
+            f_intermedia = fila + df
+            if 0 <= f_salto < 8:
+                for c_dir in [-1, 1]:
+                    c_intermedia = col + c_dir
+                    c_salto = col + (c_dir * 2)
+                    if 0 <= c_salto < 8:
+                        vecino = self.MyBoard[f_intermedia][c_intermedia]
+                        if vecino in (1, 3) and self.MyBoard[f_salto][c_salto] == 0:
+                            self.movimientos_validos.append((f_salto, c_salto))
 
     def ejecutar_turno_bot(self):
-        """Cerebro de la IA Roja (1. Captura obligatoria, 2. Movimiento Simple)"""
         if not self.game_active:
             return
 
         capturas_disponibles = []
         movimientos_simples = []
 
-        # ESCANEAR TODO EL TABLERO BUSCANDO OPCIONES PARA LAS FICHAS ROJAS (1)
         for fila in range(8):
             for col in range(8):
-                if self.MyBoard[fila][col] == 1:
-                    f_simple = fila + 1
-                    f_salto = fila + 2
-                    f_intermedia = fila + 1
+                tipo_pieza = self.MyBoard[fila][col]
 
-                    # Verificar movimientos simples hacia abajo
-                    if f_simple < 8:
-                        for c_simple in [col - 1, col + 1]:
-                            if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
-                                movimientos_simples.append(((fila, col), (f_simple, c_simple)))
+                if tipo_pieza in (1, 3):
+                    direcciones_fila = [1] if tipo_pieza == 1 else [-1, 1]
 
-                    # Verificar saltos de captura sobre fichas blancas (2)
-                    if f_salto < 8:
-                        for c_dir in [-1, 1]:
-                            c_intermedia = col + c_dir
-                            c_salto = col + (c_dir * 2)
-                            if 0 <= c_salto < 8:
-                                if self.MyBoard[f_intermedia][c_intermedia] == 2 and self.MyBoard[f_salto][
-                                    c_salto] == 0:
-                                    capturas_disponibles.append(
-                                        ((fila, col), (f_salto, c_salto), (f_intermedia, c_intermedia)))
+                    for df in direcciones_fila:
+                        f_simple = fila + df
+                        f_salto = fila + (df * 2)
+                        f_intermedia = fila + df
 
-        # DECISIÓN LOGICA DE LA IA
+                        if 0 <= f_simple < 8:
+                            for c_simple in [col - 1, col + 1]:
+                                if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
+                                    movimientos_simples.append(((fila, col), (f_simple, c_simple)))
+
+                        if 0 <= f_salto < 8:
+                            for c_dir in [-1, 1]:
+                                c_intermedia = col + c_dir
+                                c_salto = col + (c_dir * 2)
+                                if 0 <= c_salto < 8:
+                                    vecino = self.MyBoard[f_intermedia][c_intermedia]
+                                    if vecino in (2, 4) and self.MyBoard[f_salto][c_salto] == 0:
+                                        capturas_disponibles.append(
+                                            ((fila, col), (f_salto, c_salto), (f_intermedia, c_intermedia)))
+
         if capturas_disponibles:
             origen, destino, intermedia = random.choice(capturas_disponibles)
             f_orig, c_orig = origen
             f_dest, c_dest = destino
             f_int, c_int = intermedia
 
+            valor_bot = self.MyBoard[f_orig][c_orig]
             self.MyBoard[f_int][c_int] = 0
-            self.MyBoard[f_dest][c_dest] = 1
+            self.MyBoard[f_dest][c_dest] = valor_bot
             self.MyBoard[f_orig][c_orig] = 0
+
+            self.evaluar_coronacion(f_dest, c_dest, valor_bot)
             self.status_bar.showMessage(f"El BOT te ha capturado una pieza en ({f_int}, {c_int})")
 
         elif movimientos_simples:
@@ -229,13 +260,15 @@ class DamasGame(QMainWindow):
             f_orig, c_orig = origen
             f_dest, c_dest = destino
 
-            self.MyBoard[f_dest][c_dest] = 1
+            valor_bot = self.MyBoard[f_orig][c_orig]
+            self.MyBoard[f_dest][c_dest] = valor_bot
             self.MyBoard[f_orig][c_orig] = 0
-            self.status_bar.showMessage(f"El BOT movió de ({f_orig}, {c_orig}) a ({f_dest}, {c_dest})")
 
+            self.evaluar_coronacion(f_dest, c_dest, valor_bot)
+            self.status_bar.showMessage(f"El BOT movió de ({f_orig}, {c_orig}) a ({f_dest}, {c_dest})")
         else:
             self.game_active = False
-            self.status_bar.showMessage("¡Felicidades! El BOT se ha quedado sin movimientos. ¡Ganaste!")
+            self.status_bar.showMessage("¡Felicidades! El BOT no tiene movimientos. ¡Ganaste!")
             return
 
         self.tablero.update()
