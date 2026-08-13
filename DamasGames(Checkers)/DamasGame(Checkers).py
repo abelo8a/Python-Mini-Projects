@@ -1,8 +1,9 @@
 import sys
 import random
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel
 from PyQt6.QtCore import Qt, QPoint, QTimer
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+# CORREGIDO: Se añade QFont a las importaciones de QtGui
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
 
 
 class TableroDamas(QWidget):
@@ -24,29 +25,35 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # SINTAXIS CORREGIDA: Tupla explícita para evitar pérdidas de texto
+        # Seleccionar pieza humana (normal 2 o reina 4)
         if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
 
+        # Ejecutar movimiento seleccionado
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
+            # Si fue un salto de captura, eliminar la pieza roja intermedia
             if abs(fila - f_origen) == 2:
                 f_intermedia = int((fila + f_origen) // 2)
                 c_intermedia = int((col + c_origen) // 2)
                 self.main_window.MyBoard[f_intermedia][c_intermedia] = 0
                 self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
+                self.main_window.actualizar_contadores_interfaz()
             else:
                 self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
 
+            # Trasladar ficha en la matriz
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
+            # Evaluar si el movimiento genera una coronación
             self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
+            # Limpiar selección y transferir turno al BOT
             self.main_window.pieza_seleccionada = None
             self.main_window.movimientos_validos.clear()
             self.update()
@@ -85,11 +92,10 @@ class TableroDamas(QWidget):
                 if pieza == 0:
                     continue
 
-                # SINTAXIS CORREGIDA: Tuplas para mapeo de colores por bando
-                if pieza in (1, 3):  # Rojas (Normal = 1, Reina = 3)
+                if pieza in (1, 3):  # Rojas
                     color_pieza = QColor(200, 20, 20)
                     color_borde = QColor(100, 5, 5)
-                elif pieza in (2, 4):  # Blancas (Normal = 2, Reina = 4)
+                elif pieza in (2, 4):  # Blancas
                     color_pieza = QColor(240, 240, 240)
                     color_borde = QColor(150, 150, 150)
 
@@ -105,7 +111,7 @@ class TableroDamas(QWidget):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(QPoint(center_x, center_y), int(radio_pieza * 0.6), int(radio_pieza * 0.6))
 
-                # SINTAXIS CORREGIDA: Corona dorada para Reinas (valores 3 o 4)
+                # Renderizado de corona dorada para Reinas
                 if pieza in (3, 4):
                     painter.setPen(QPen(QColor(218, 165, 32), 2))
                     painter.setBrush(QBrush(QColor(255, 215, 0)))
@@ -125,7 +131,7 @@ class TableroDamas(QWidget):
 
 
 # =====================================================================
-# SEGUNDA PARTE: CLASE PRINCIPAL, CORONACIÓN E IA DEL BOT
+# SEGUNDA PARTE: MOTOR DE JUEGO, CONTADORES E IA DEL BOT
 # =====================================================================
 
 class DamasGame(QMainWindow):
@@ -155,7 +161,7 @@ class DamasGame(QMainWindow):
                     self.MyBoard[fila][col] = 2
 
     def init_ui(self):
-        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.3')
+        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.4')
         self.setFixedSize(580, 425)
         self.setStyleSheet("background-color: #1a1a1a; color: white;")
 
@@ -163,6 +169,37 @@ class DamasGame(QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.tablero = TableroDamas(self)
 
+        # --- PANEL DE CONTROL LATERAL DERECHO ---
+        self.panel_control = QWidget(self.central_widget)
+        self.panel_control.setGeometry(405, 0, 175, 400)
+        self.panel_control.setStyleSheet("background-color: #111; border-left: 2px solid #333;")
+
+        font_titulos = QFont('MS Sans Serif', 10, QFont.Weight.Bold)
+        font_valores = QFont('MS Sans Serif', 14, QFont.Weight.Bold)
+
+        # Etiquetas de Bajas del Humano (Fichas rojas eliminadas)
+        self.label_titulo_humano = QLabel('Comidas por ti:', self.panel_control)
+        self.label_titulo_humano.setGeometry(10, 20, 155, 20)
+        self.label_titulo_humano.setFont(font_titulos)
+        self.label_titulo_humano.setStyleSheet("color: #55FF55; border: none;")
+
+        self.label_bajas_humano = QLabel('0 / 12', self.panel_control)
+        self.label_bajas_humano.setGeometry(10, 45, 155, 25)
+        self.label_bajas_humano.setFont(font_valores)
+        self.label_bajas_humano.setStyleSheet("color: #00FF00; border: none;")
+
+        # Etiquetas de Bajas del BOT (Fichas blancas eliminadas)
+        self.label_titulo_bot = QLabel('Comidas por BOT:', self.panel_control)
+        self.label_titulo_bot.setGeometry(10, 100, 155, 20)
+        self.label_titulo_bot.setFont(font_titulos)
+        self.label_titulo_bot.setStyleSheet("color: #FF5555; border: none;")
+
+        self.label_bajas_bot = QLabel('0 / 12', self.panel_control)
+        self.label_bajas_bot.setGeometry(10, 125, 155, 25)
+        self.label_bajas_bot.setFont(font_valores)
+        self.label_bajas_bot.setStyleSheet("color: #FF3333; border: none;")
+
+        # --- BARRA DE ESTADO ---
         self.status_bar = QStatusBar(self)
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Tu turno (Fichas Blancas). Elige una pieza.")
@@ -182,6 +219,25 @@ class DamasGame(QMainWindow):
         elif bando == 1 and fila == 7:
             self.MyBoard[fila][col] = 3
             self.status_bar.showMessage(f"👑 El BOT ha coronado una REINA en ({fila}, {col})")
+
+    def actualizar_contadores_interfaz(self):
+        """Escanea la matriz para calcular las bajas de forma exacta en tiempo real."""
+        vivas_rojas = 0
+        vivas_blancas = 0
+
+        for fila in range(8):
+            for col in range(8):
+                val = self.MyBoard[fila][col]
+                if val in (1, 3):
+                    vivas_rojas += 1
+                elif val in (2, 4):
+                    vivas_blancas += 1
+
+        comidas_por_humano = 12 - vivas_rojas
+        comidas_por_bot = 12 - vivas_blancas
+
+        self.label_bajas_humano.setText(f"{comidas_por_humano} / 12")
+        self.label_bajas_bot.setText(f"{comidas_por_bot} / 12")
 
     def calcular_movimientos_validos_humano(self, fila, col):
         self.movimientos_validos.clear()
@@ -254,6 +310,7 @@ class DamasGame(QMainWindow):
 
             self.evaluar_coronacion(f_dest, c_dest, valor_bot)
             self.status_bar.showMessage(f"El BOT te ha capturado una pieza en ({f_int}, {c_int})")
+            self.actualizar_contadores_interfaz()
 
         elif movimientos_simples:
             origen, destino = random.choice(movimientos_simples)
