@@ -14,8 +14,12 @@ class TableroDamas(QWidget):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        """Maneja el turno del humano con soporte de combos múltiples encadenados y no-retorno."""
+        """Maneja el turno del humano con soporte de combos múltiples reales de largo alcance y no-retorno."""
         if not self.main_window.game_active or self.main_window.turno_actual != "HUMANO":
+            return
+
+        # BLOQUEO DE SEGURIDAD: Impedir clics si está corriendo la animación de parpadeo de castigo
+        if self.main_window.en_penalizacion_parpadeo:
             return
 
         box_size = 50
@@ -25,18 +29,16 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # --- CASO A: EL JUGADOR YA ESTÁ EN MEDIO DE UN COMBO DE CAPTURA ---
+        # --- CASO A: EL JUGADOR YA SE ENCUENTRA EN MEDIO DE UN COMBO DE CAPTURA ACTIVO ---
         if self.main_window.en_combo_captura:
-            # Si hace clic en uno de los destinos verdes del combo
             if (fila, col) in self.main_window.movimientos_validos:
                 f_origen, c_origen = self.main_window.pieza_en_combo
                 valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-                # 1. Calcular el vector que acaba de usar para este salto
                 df_usado = 1 if fila > f_origen else -1
                 dc_usado = 1 if col > c_origen else -1
 
-                # 2. Barrido diagonal para eliminar la pieza roja intermedia comida
+                # Barrido diagonal para eliminar la pieza enemiga comida
                 f_scan = f_origen + df_usado
                 c_scan = c_origen + dc_usado
                 while f_scan != fila and c_scan != col:
@@ -46,80 +48,100 @@ class TableroDamas(QWidget):
                     f_scan += df_usado
                     c_scan += dc_usado
 
-                # 3. Trasladar la ficha físicamente en la matriz
                 self.main_window.MyBoard[fila][col] = valor_pieza
                 self.main_window.MyBoard[f_origen][c_origen] = 0
                 self.main_window.actualizar_contadores_interfaz()
 
-                # 4. Evaluar si se corona (Al coronarse en fila 0, el combo reglamentariamente termina)
+                # Regla de Oro: Si corona en la fila 0, el combo finaliza reglamentariamente de inmediato
                 if valor_pieza == 2 and fila == 0:
                     self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                    self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
-                    self.main_window.ultimo_vector_salto = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
                     return
 
-                # 5. Escanear si desde esta nueva posición hay MÁS saltos válidos
-                # Le pasamos el vector inverso para prohibir el regreso hacia atrás
+                # Escanear si nacerán MÁS saltos legales desde esta nueva posición de aterrizaje
+                # Se pasa el vector inverso para prohibir el regreso hacia atrás en zigzag
                 saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
                                                                                vector_prohibido=(-df_usado, -dc_usado))
 
                 if saltos_siguientes:
-                    # El combo continúa: bloqueamos la pieza en su nueva casilla
+                    # El combo se extiende: Bloquear la selección en la ficha actual
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
                     self.main_window.movimientos_validos = saltos_siguientes
-                    self.main_window.status_bar.showMessage("¡Combo activo! Continúa capturando las piezas indicadas.")
+                    self.main_window.status_bar.showMessage("¡Combo activo! Tienes 3 segundos para el siguiente salto.")
+                    self.update()
+                    self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                 else:
-                    # El combo terminó de forma natural: limpiamos y va el BOT
+                    # El combo terminó de forma natural: Apagar timers y transferir al BOT
+                    self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
-                    self.main_window.ultimo_vector_salto = None
                     self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
             return
 
-        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER MOVIMIENTO DEL TURNO) ---
+        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL MOVIMIENTO DEL JUGADOR) ---
         if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
+            self.update()
 
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # Detectar si fue un salto de captura
-            if abs(fila - f_origen) > 1:
-                df_usado = 1 if fila > f_origen else -1
-                dc_usado = 1 if col > c_origen else -1
+            # 1. DETECTAR SI EN LA DIAGONAL CRUZADA EXISTIÓ UNA CAPTURA REAL
+            fue_salto_captura = False
+            df_usado = 1 if fila > f_origen else -1
+            dc_usado = 1 if col > c_origen else -1
 
-                f_scan = f_origen + df_usado
-                c_scan = c_origen + dc_usado
-                while f_scan != fila and c_scan != col:
-                    if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
-                        self.main_window.MyBoard[f_scan][c_scan] = 0
-                        break
-                    f_scan += df_usado
-                    c_scan += dc_usado
+            f_scan = f_origen + df_usado
+            c_scan = c_origen + dc_usado
+            while f_scan != fila and c_scan != col:
+                if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
+                    self.main_window.MyBoard[f_scan][c_scan] = 0  # ¡Eliminada!
+                    fue_salto_captura = True
+                    break
+                f_scan += df_usado
+                c_scan += dc_usado
 
-                self.main_window.MyBoard[fila][col] = valor_pieza
-                self.main_window.MyBoard[f_origen][c_origen] = 0
+            # Trasladar la pieza en la matriz real
+            self.main_window.MyBoard[fila][col] = valor_pieza
+            self.main_window.MyBoard[f_origen][c_origen] = 0
+
+            if fue_salto_captura:
                 self.main_window.actualizar_contadores_interfaz()
-                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
 
-                # TRAS EL PRIMER SALTO: Escanear si nace un combo múltiple obligatorio
-                # Calculamos el vector inverso para la regla de no-retorno
+                # Evaluar coronación por si acaso
+                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                nuevo_valor_pieza = self.main_window.MyBoard[fila][col]
+
+                # Freno estricto de combo si se acaba de coronar en este turno (Nace pasiva)
+                if nuevo_valor_pieza == 4 and valor_pieza == 2:
+                    self.main_window.interrumpir_timers_combo()
+                    self.main_window.en_combo_captura = False
+                    self.main_window.pieza_en_combo = None
+                    self.main_window.pieza_seleccionada = None
+                    self.main_window.movimientos_validos.clear()
+                    self.update()
+                    self.main_window.cambiar_turno("BOT")
+                    return
+
+                # ESCANEAR SI NACE UN COMBO MÚLTIPLE REAL OBLIGATORIO DESDE EL ATERRIZAJE
                 saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
                                                                                vector_prohibido=(-df_usado, -dc_usado))
 
                 if saltos_siguientes:
-                    # Activamos el estado de combo y congelamos la interfaz
+                    # Congelar la interfaz en esta única pieza y levantar estado de combo continuo
                     self.main_window.en_combo_captura = True
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
@@ -127,15 +149,14 @@ class TableroDamas(QWidget):
                     self.main_window.status_bar.showMessage(
                         "¡Captura múltiple detectada! Tienes 3 segundos para continuar.")
                     self.update()
-                    # Nota: El temporizador de 3s de la Fase 3 se acoplará exactamente aquí abajo
+                    self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                     return
             else:
-                # Movimiento simple regular sin saltos
-                self.main_window.MyBoard[fila][col] = valor_pieza
-                self.main_window.MyBoard[f_origen][c_origen] = 0
+                # Movimiento diagonal simple regular (Acecho legal / Desplazamiento de Reina)
                 self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
 
-            # Cierre de turno normal
+            # Cierre y limpieza de turno limpio sin combos activos pendientes
             self.main_window.pieza_seleccionada = None
             self.main_window.movimientos_validos.clear()
             self.update()
@@ -150,10 +171,10 @@ class TableroDamas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
         box_size = 50
         radius = box_size / 2
 
+        # 1. DIBUJAR CASILLAS
         for fila in range(8):
             for col in range(8):
                 bg_color = QColor(240, 217, 181) if (fila + col) % 2 == 0 else QColor(181, 136, 99)
@@ -173,12 +194,19 @@ class TableroDamas(QWidget):
                 if pieza == 0:
                     continue
 
-                if pieza in (1, 3):  # Rojas
-                    color_pieza = QColor(200, 20, 20)
-                    color_borde = QColor(100, 5, 5)
-                elif pieza in (2, 4):  # Blancas
-                    color_pieza = QColor(240, 240, 240)
-                    color_borde = QColor(150, 150, 150)
+                # 2. ASIGNAR COLORES DE LAS PIEZAS CONSIDERANDO EL PARPADEO
+                # Si la pieza está en la lista de infracción y el ciclo de parpadeo está encendido
+                if self.main_window.en_penalizacion_parpadeo and (fila,
+                                                                  col) in self.main_window.piezas_a_parpadear and self.main_window.color_parpadeo_activo:
+                    color_pieza = QColor(255, 140, 0)  # Naranja/Oro brillante de advertencia
+                    color_borde = QColor(255, 0, 0)  # Rojo penalización
+                else:
+                    if pieza in (1, 3):  # Rojas
+                        color_pieza = QColor(200, 20, 20)
+                        color_borde = QColor(100, 5, 5)
+                    elif pieza in (2, 4):  # Blancas
+                        color_pieza = QColor(240, 240, 240)
+                        color_borde = QColor(150, 150, 150)
 
                 center_x = int((col * box_size) + radius)
                 center_y = int((fila * box_size) + radius)
@@ -192,22 +220,17 @@ class TableroDamas(QWidget):
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(QPoint(center_x, center_y), int(radio_pieza * 0.6), int(radio_pieza * 0.6))
 
-                # Renderizado de corona dorada para Reinas
+                # Renderizar corona dorada para Reinas
                 if pieza in (3, 4):
                     painter.setPen(QPen(QColor(218, 165, 32), 2))
                     painter.setBrush(QBrush(QColor(255, 215, 0)))
-
                     puntos_corona = [
-                        QPoint(center_x - 10, center_y + 6),
-                        QPoint(center_x - 12, center_y - 6),
-                        QPoint(center_x - 4, center_y + 0),
-                        QPoint(center_x + 0, center_y - 10),
-                        QPoint(center_x + 4, center_y + 0),
-                        QPoint(center_x + 12, center_y - 6),
-                        QPoint(center_x + 10, center_y + 6),
+                        QPoint(center_x - 10, center_y + 6), QPoint(center_x - 12, center_y - 6),
+                        QPoint(center_x - 4, center_y + 0), QPoint(center_x + 0, center_y - 10),
+                        QPoint(center_x + 4, center_y + 0), QPoint(center_x + 12, center_y - 6),
+                        QPoint(center_x + 10, center_y + 6)
                     ]
                     painter.drawPolygon(puntos_corona)
-
         painter.end()
 
 
@@ -229,6 +252,14 @@ class DamasGame(QMainWindow):
         self.en_combo_captura = False
         self.pieza_en_combo = None      # Guardará la tupla (fila, col) de la ficha bloqueada
         self.ultimo_vector_salto = None # Guardará (df, dc) para calcular el no-retorno
+
+        # NUEVAS: Variables para el control de la penalización por tiempo
+        self.timer_oportunidad = None  # QTimer de 3 segundos
+        self.timer_parpadeo = None     # QTimer para la animación de 2 segundos
+        self.timer_ciclo_color = None  # QTimer rápido (200ms) para alternar el color
+        self.en_penalizacion_parpadeo = False
+        self.color_parpadeo_activo = True
+        self.piezas_a_parpadear = []   # Lista de tuplas [(f1, c1), (f2, c2)]
 
         self.init_board_setup()
         self.init_ui()
@@ -374,11 +405,11 @@ class DamasGame(QMainWindow):
         self.label_bajas_bot.setText(f"{comidas_por_bot} / 12")
 
     def calcular_movimientos_validos_humano(self, fila, col):
-        """Calcula movimientos simples y saltos para peones (2) y Reinas Voladoras (4)."""
+        """Calcula movimientos simples y saltos para peones (2) y Reinas Voladoras (4) en su primer movimiento."""
         self.movimientos_validos.clear()
         tipo_pieza = self.MyBoard[fila][col]
 
-        # 1. SI ES UN PEÓN NORMAL (Mantiene su lógica de corto alcance hacia arriba)
+        # 1. LOGICA DE PEÓN NORMAL (Mantiene su comportamiento estable de corto alcance)
         if tipo_pieza == 2:
             f_simple = fila - 1
             if f_simple >= 0:
@@ -397,9 +428,8 @@ class DamasGame(QMainWindow):
                         if vecino in (1, 3) and self.MyBoard[f_salto][c_salto] == 0:
                             self.movimientos_validos.append((f_salto, c_salto))
 
-        # 2. SI ES UNA REINA VOLADORA (Nuevo rayo vectorial continuo a larga distancia)
+        # 2. LOGICA DE REINA VOLADORA (Rayo continuo corregido para el inicio del turno)
         elif tipo_pieza == 4:
-            # Las 4 direcciones diagonales posibles
             direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
 
             for df, dc in direcciones:
@@ -407,30 +437,23 @@ class DamasGame(QMainWindow):
                 c_actual = col + dc
                 pieza_enemiga_detectada = None
 
-                # Avanzar en línea recta diagonal hasta los límites del tablero
                 while 0 <= f_actual < 8 and 0 <= c_actual < 8:
                     val_celda = self.MyBoard[f_actual][c_actual]
 
                     if not pieza_enemiga_detectada:
                         if val_celda == 0:
-                            # Casilla vacía en el camino: movimiento simple legal
+                            # Permitir el movimiento de acecho o desplazamiento libre por la diagonal
                             self.movimientos_validos.append((f_actual, c_actual))
                         elif val_celda in (1, 3):
-                            # Encontró pieza enemiga: registrar posición y evaluar salto
                             pieza_enemiga_detectada = (f_actual, c_actual)
                         else:
-                            # Encontró pieza aliada: rayo bloqueado por completo
-                            break
+                            break  # Bloqueado por ficha aliada
                     else:
-                        # Ya encontramos una pieza enemiga antes, ahora evaluamos dónde aterrizar
                         if val_celda == 0:
-                            # ¡Aterrizaje libre! Se registra como salto de captura legal a larga distancia
+                            # Registrar la casilla de aterrizaje como una opción de captura disponible
                             self.movimientos_validos.append((f_actual, c_actual))
-                            # En damas internacionales/españolas, tras pasar la pieza comida, la reina
-                            # puede elegir en cuál de las casillas vacías posteriores frenar su deslizamiento.
                         else:
-                            # Si hay otra pieza inmediatamente detrás de la enemiga, el salto se bloquea
-                            break
+                            break  # Bloqueado por otra pieza detrás del enemigo
 
                     f_actual += df
                     c_actual += dc
@@ -505,47 +528,50 @@ class DamasGame(QMainWindow):
 
     def calcular_saltos_continuos(self, fila, col, vector_prohibido=None):
         """
-        NUEVO: Escanea si una pieza (normal o Reina) tiene capturas encadenadas
-        disponibles desde su posición actual, bloqueando el retorno inverso.
+        PERFECTA: Escanea saltos de combo reales e inmediatos para peones y Reinas.
+        Soporta capturas a larga distancia para Reinas, eliminando falsos positivos.
         """
         saltos_encontrados = []
         tipo_pieza = self.MyBoard[fila][col]
 
-        # Configurar direcciones base según el tipo de pieza
-        if tipo_pieza == 2:    # Peón blanco: solo sube (-1)
+        if tipo_pieza == 2:  # Peón blanco: solo sube (-1)
             direcciones = [(-1, -1), (-1, 1)]
-        elif tipo_pieza == 4:  # Reina blanca: se mueve en las 4 direcciones
+        elif tipo_pieza == 4:  # Reina blanca: las 4 direcciones
             direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
         else:
             return []
 
         for df, dc in direcciones:
-            # REGLA DE NO-RETORNO: Si coincide con el vector opuesto exacto, se ignora
-            if vector_prohibido and (df == vector_prohibido[0] and dc == vector_prohibido[1]):
+            # Regla de No-Retorno en zigzag
+            if vector_prohibido and (df == vector_prohibido and dc == vector_prohibido):
                 continue
 
-            # Escaneo de largo alcance para Reina (4) o corto alcance para Peón (2)
-            if tipo_pieza == 4:
+            if tipo_pieza == 4:  # LÓGICA DE REINA VOLADORA EN COMBO
                 f_actual = fila + df
                 c_actual = col + dc
                 enemigo_detectado = None
 
+                # Lanzar el rayo a larga distancia desde la celda de aterrizaje actual
                 while 0 <= f_actual < 8 and 0 <= c_actual < 8:
                     val_celda = self.MyBoard[f_actual][c_actual]
+
                     if not enemigo_detectado:
-                        if val_celda in (1, 3):  # Encontró pieza enemiga roja
+                        if val_celda in (1, 3):  # Encontró pieza enemiga (roja o reina)
                             enemigo_detectado = (f_actual, c_actual)
-                        elif val_celda != 0:     # Chocó con pieza aliada
+                        elif val_celda != 0:  # Chocó con pieza aliada propia
                             break
                     else:
-                        if val_celda == 0:       # Casilla de aterrizaje libre tras el enemigo
+                        # Si ya cruzó al enemigo, la primera casilla detrás DEBE estar vacía
+                        if val_celda == 0:
+                            # ¡Es un salto de combo legal de largo alcance!
                             saltos_encontrados.append((f_actual, c_actual))
-                        else:
-                            break  # Bloqueado por otra pieza detrás del enemigo
+                        # En damas oficiales, la reina puede frenar en cualquiera de las casillas vacías
+                        # posteriores, pero para el escaneo de combo continuo registramos el aterrizaje inmediato.
+                        break
+
                     f_actual += df
                     c_actual += dc
-            else:
-                # Lógica de salto de corto alcance para el peón normal (2)
+            else:  # LÓGICA DE PEÓN ESTABLE
                 f_intermedia = fila + df
                 f_salto = fila + (df * 2)
                 c_intermedia = col + dc
@@ -557,6 +583,79 @@ class DamasGame(QMainWindow):
 
         return saltos_encontrados
 
+    def iniciar_cuenta_regresiva_combo(self, f_infractora, c_infractora, saltos_omitidos):
+        """NUEVO: Inicializa el reloj de 3 segundos para continuar el combo."""
+        self.interrumpir_timers_combo()
+
+        # Configurar las piezas que van a parpadear si se agota el tiempo
+        self.piezas_a_parpadear = [(f_infractora, c_infractora)]
+        # Buscamos qué piezas enemigas se salvaron en las diagonales omitidas
+        for f_s, c_s in saltos_omitidos:
+            paso_f = 1 if f_s > f_infractora else -1
+            paso_c = 1 if c_s > c_infractora else -1
+            f_scan, c_scan = f_infractora + paso_f, c_infractora + paso_c
+            while f_scan != f_s and c_scan != c_s:
+                if self.MyBoard[f_scan][c_scan] in (1, 3):
+                    self.piezas_a_parpadear.append((f_scan, c_scan))
+                    break
+                f_scan += paso_f
+                c_scan += paso_c
+
+        # Crear y arrancar el temporizador de cuenta regresiva de 3000ms
+        self.timer_oportunidad = QTimer(self)
+        self.timer_oportunidad.setSingleShot(True)
+        self.timer_oportunidad.timeout.connect(self.aplicar_castigo_omision)
+        self.timer_oportunidad.start(3000)
+
+    def alternar_color_parpadeo(self):
+        """NUEVO: Alterna el estado visual del color cada 200ms para simular el parpadeo."""
+        self.color_parpadeo_activo = not self.color_parpadeo_activo
+        self.tablero.update()
+
+    def aplicar_castigo_omision(self):
+        """NUEVO: Detona la animación de 2 segundos tras agotarse el tiempo de oportunidad."""
+        self.en_penalizacion_parpadeo = True
+        self.status_bar.showMessage("⚠️ ¡TIEMPO AGOTADO! Penalización por omitir captura múltiple.")
+
+        # Temporizador rápido de 200ms para alternar colores de advertencia
+        self.timer_ciclo_color = QTimer(self)
+        self.timer_ciclo_color.timeout.connect(self.alternar_color_parpadeo)
+        self.timer_ciclo_color.start(200)
+
+        # Temporizador de 2 segundos que frena la animación y borra la pieza
+        self.timer_parpadeo = QTimer(self)
+        self.timer_parpadeo.setSingleShot(True)
+        self.timer_parpadeo.timeout.connect(self.concluir_castigo_y_ceder_turno)
+        self.timer_parpadeo.start(2000)
+
+    def concluir_castigo_y_ceder_turno(self):
+        """NUEVO: Borra la pieza infractora de la matriz y pasa el turno al BOT."""
+        if self.piezas_a_parpadear:
+            f_inf, c_inf = self.piezas_a_parpadear[0]
+            # Soplado reglamentario: La ficha del jugador se elimina de la matriz
+            self.MyBoard[f_inf][c_inf] = 0
+            self.status_bar.showMessage(f"Ficha penalizada y eliminada en ({f_inf}, {c_inf}). Turno del BOT.")
+
+        # Limpiar estados de animación y combo
+        self.interrumpir_timers_combo()
+        self.en_combo_captura = False
+        self.pieza_en_combo = None
+        self.pieza_seleccionada = None
+        self.movimientos_validos.clear()
+
+        self.tablero.update()
+        self.cambiar_turno("BOT")
+
+    def interrumpir_timers_combo(self):
+        """NUEVO: Apaga de forma segura todos los relojes activos."""
+        if hasattr(self, 'timer_oportunidad') and self.timer_oportunidad and self.timer_oportunidad.isActive():
+            self.timer_oportunidad.stop()
+        if hasattr(self, 'timer_ciclo_color') and self.timer_ciclo_color and self.timer_ciclo_color.isActive():
+            self.timer_ciclo_color.stop()
+        if hasattr(self, 'timer_parpadeo') and self.timer_parpadeo and self.timer_parpadeo.isActive():
+            self.timer_parpadeo.stop()
+        self.en_penalizacion_parpadeo = False
+        self.color_parpadeo_activo = True
 
 
 if __name__ == '__main__':
