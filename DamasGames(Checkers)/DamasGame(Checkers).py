@@ -1,6 +1,6 @@
 import sys
 import random
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel, QMenuBar, QPushButton
 from PyQt6.QtCore import Qt, QPoint, QTimer
 # CORREGIDO: Se añade QFont a las importaciones de QtGui
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
@@ -278,13 +278,30 @@ class DamasGame(QMainWindow):
                     self.MyBoard[fila][col] = 2
 
     def init_ui(self):
-        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.4')
+        self.setWindowTitle('Damas Game - IA Laboratory Engine v1.5')
         self.setFixedSize(580, 425)
         self.setStyleSheet("background-color: #1a1a1a; color: white;")
 
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
         self.tablero = TableroDamas(self)
+
+        # --- BARRA DE MENÚ SUPERIOR ---
+        self.menu_bar = QMenuBar(self)
+        self.setMenuBar(self.menu_bar)
+        self.menu_bar.setStyleSheet("""
+            QMenuBar { background-color: #222; color: white; border-bottom: 1px solid #333; }
+            QMenuBar::item:selected { background-color: #444; }
+            QMenu { background-color: #222; color: white; border: 1px solid #333; }
+            QMenu::item:selected { background-color: #00FF00; color: black; }
+        """)
+
+        menu_juego = self.menu_bar.addMenu("&Juego")
+        accion_reiniciar = menu_juego.addAction("&Reiniciar Partida")
+        accion_reiniciar.triggered.connect(self.reiniciar_partida)
+
+        accion_salir = menu_juego.addAction("&Salir")
+        accion_salir.triggered.connect(QApplication.instance().quit)
 
         # --- PANEL DE CONTROL LATERAL DERECHO ---
         self.panel_control = QWidget(self.central_widget)
@@ -315,6 +332,28 @@ class DamasGame(QMainWindow):
         self.label_bajas_bot.setGeometry(10, 125, 155, 25)
         self.label_bajas_bot.setFont(font_valores)
         self.label_bajas_bot.setStyleSheet("color: #FF3333; border: none;")
+
+        # NUEVO: Botón interactivo de Reinicio en el Panel Lateral
+        self.btn_reiniciar = QPushButton('REINICIAR', self.panel_control)
+        self.btn_reiniciar.setGeometry(12, 330, 150, 40)
+        self.btn_reiniciar.setFont(font_titulos)
+        self.btn_reiniciar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reiniciar.setStyleSheet("""
+            QPushButton {
+                background-color: #222;
+                color: #00FF00;
+                border: 2px solid #00FF00;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #00FF00;
+                color: #000;
+            }
+            QPushButton:pressed {
+                background-color: #009900;
+            }
+        """)
+        self.btn_reiniciar.clicked.connect(self.reiniciar_partida)
 
         # --- BARRA DE ESTADO ---
         self.status_bar = QStatusBar(self)
@@ -657,6 +696,33 @@ class DamasGame(QMainWindow):
         self.en_penalizacion_parpadeo = False
         self.color_parpadeo_activo = True
 
+    def reiniciar_partida(self):
+        """Detiene de inmediato las penalizaciones en curso y limpia el tablero a su estado inicial."""
+        # 1. Seguridad: Detener todos los timers asíncronos para evitar soplados residuales
+        self.interrumpir_timers_combo()
+
+        # 2. Resetear variables de control lógico de turnos y combos
+        self.game_active = True
+        self.turno_actual = "HUMANO"
+        self.pieza_seleccionada = None
+        self.movimientos_validos.clear()
+        self.en_combo_captura = False
+        self.pieza_en_combo = None
+        self.ultimo_vector_salto = None
+        self.en_penalizacion_parpadeo = False
+        self.color_parpadeo_activo = True
+        self.piezas_a_parpadear.clear()
+
+        # 3. Vaciar y regenerar la matriz de juego 8x8 con la configuración reglamentaria
+        self.MyBoard = [[0 for _ in range(8)] for _ in range(8)]
+        self.init_board_setup()
+
+        # 4. Actualizar contadores visuales (0 / 12) y refrescar los lienzos
+        self.actualizar_contadores_interfaz()
+        self.tablero.update()
+
+        # 5. Notificar en la barra de estado
+        self.status_bar.showMessage("Partida reiniciada con éxito. Tu turno (Fichas Blancas).")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
