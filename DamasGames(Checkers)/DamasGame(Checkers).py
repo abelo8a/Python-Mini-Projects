@@ -1,6 +1,6 @@
 import sys
 import random
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel, QMenuBar, QPushButton
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel, QMenuBar, QPushButton, QCheckBox
 from PyQt6.QtCore import Qt, QPoint, QTimer
 # CORREGIDO: Se añade QFont a las importaciones de QtGui
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
@@ -53,11 +53,15 @@ class TableroDamas(QWidget):
                 self.main_window.actualizar_contadores_interfaz()
 
                 # Regla de Oro: Si corona en la fila 0, el combo finaliza reglamentariamente de inmediato
+                # Regla de Oro: Si corona en la fila 0 durante un combo, finaliza de inmediato
                 if valor_pieza == 2 and fila == 0:
-                    self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                    self.main_window.MyBoard[fila][col] = 4  # Forzar transformación física en la matriz
+                    self.main_window.status_bar.showMessage(
+                        f"👑 ¡Tu pieza se ha coronado como REINA en ({fila}, {col})!")
                     self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
+                    self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
@@ -91,8 +95,32 @@ class TableroDamas(QWidget):
         if self.main_window.MyBoard[fila][col] in (2, 4):
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
+
+            # INYECCIÓN INTELIGENTE: Si está activado "Forzar Captura", filtramos dejando SOLO los saltos
+            if self.main_window.regla_forzar_captura:
+                # El método calcular_movimientos_validos_humano obtiene tanto pasos simples como saltos.
+                # Identificamos un salto porque la distancia de filas es mayor a 1 celda (tanto para peón como reina)
+                saltos_obligatorios = []
+                for f_v, c_v in self.main_window.movimientos_validos:
+                    # Validar si en el trayecto intermedio existe una captura real
+                    df_u = 1 if f_v > fila else -1
+                    dc_u = 1 if c_v > col else -1
+                    f_s, c_s = fila + df_u, col + dc_u
+                    while f_s != f_v and c_s != c_v:
+                        if self.main_window.MyBoard[f_s][c_s] in (1, 3):
+                            saltos_obligatorios.append((f_v, c_v))
+                            break
+                        f_s += df_u
+                        c_s += dc_u
+
+                # Si existen capturas obligatorias en esta ficha, borramos los pasos simples de aproximación
+                if saltos_obligatorios:
+                    self.main_window.movimientos_validos = saltos_obligatorios
+                    self.main_window.status_bar.showMessage("¡Modo Torneo! Estás obligado a ejecutar la captura.")
+
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
             self.update()
+
 
         elif (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
@@ -119,14 +147,13 @@ class TableroDamas(QWidget):
 
             if fue_salto_captura:
                 self.main_window.actualizar_contadores_interfaz()
-                self.main_window.status_bar.showMessage(f"¡Has capturado una ficha enemiga!")
+                self.main_window.status_bar.showMessage("¡Has capturado una ficha enemiga!")
 
-                # Evaluar coronación por si acaso
+                # 1. Evaluar e inyectar la coronación de forma inmediata si corresponde
                 self.main_window.evaluar_coronacion(fila, col, valor_pieza)
-                nuevo_valor_pieza = self.main_window.MyBoard[fila][col]
 
-                # Freno estricto de combo si se acaba de coronar en este turno (Nace pasiva)
-                if nuevo_valor_pieza == 4 and valor_pieza == 2:
+                # 2. Freno estricto de combo si se acaba de coronar en este turno (Nace pasiva)
+                if self.main_window.MyBoard[fila][col] == 4 and valor_pieza == 2:
                     self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
@@ -136,12 +163,13 @@ class TableroDamas(QWidget):
                     self.main_window.cambiar_turno("BOT")
                     return
 
-                # ESCANEAR SI NACE UN COMBO MÚLTIPLE REAL OBLIGATORIO DESDE EL ATERRIZAJE
-                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
-                                                                               vector_prohibido=(-df_usado, -dc_usado))
+                # 3. ESCANEAR SI NACE UN COMBO MÚLTIPLE DESDE LA NUEVA CASILLA DE ATERRIZAJE
+                saltos_siguientes = self.main_window.calcular_saltos_continuos(
+                    fila, col, vector_prohibido=(-df_usado, -dc_usado)
+                )
 
                 if saltos_siguientes:
-                    # Congelar la interfaz en esta única pieza y levantar estado de combo continuo
+                    # El combo continúa en la misma ficha: levantar estado de combo
                     self.main_window.en_combo_captura = True
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
@@ -151,16 +179,89 @@ class TableroDamas(QWidget):
                     self.update()
                     self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                     return
+                else:
+                    # Si no hay más capturas continuas en esta cadena, el turno termina limpiamente
+                    self.main_window.pieza_seleccionada = None
+                    self.main_window.movimientos_validos.clear()
+                    self.update()
+                    self.main_window.cambiar_turno("BOT")
+                    return
+
+
+
             else:
-                # Movimiento diagonal simple regular (Acecho legal / Desplazamiento de Reina)
-                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+
+                # --- CASO: EL MOVIMIENTO FUE UN PASO SIMPLE REGULAR DE APROXIMACIÓN ---
+
                 self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
 
-            # Cierre y limpieza de turno limpio sin combos activos pendientes
-            self.main_window.pieza_seleccionada = None
-            self.main_window.movimientos_validos.clear()
-            self.update()
-            self.main_window.cambiar_turno("BOT")
+                # REGLA DE SOPLADO INMEDIATO GLOBAL
+
+                if self.main_window.regla_soplado_automatico:
+
+                    # 1. Aislamiento matemático: Revertimos temporalmente el tablero al inicio del turno
+
+                    self.main_window.MyBoard[f_origen][c_origen] = valor_pieza
+
+                    self.main_window.MyBoard[fila][col] = 0
+
+                    # 2. El radar busca si existía CUALQUIER ficha con posibilidad de comer en el tablero
+
+                    fichas_infractoras = self.main_window.obtener_todas_las_piezas_con_captura_humano()
+
+                    # 3. Devolvemos la matriz a su estado post-movimiento
+
+                    self.main_window.MyBoard[f_origen][c_origen] = 0
+
+                    self.main_window.MyBoard[fila][col] = valor_pieza
+
+                    if fichas_infractoras:
+
+                        # ¡Infracción global detectada! Alguien omitió comer.
+
+                        # Castigamos eliminando la ficha infractora real (o la primera de la lista si hay varias)
+
+                        f_inf, c_inf = fichas_infractoras[0]
+
+                        # Si la ficha infractora era la misma que se movió, la borramos de su nueva posición
+
+                        if (f_inf, c_inf) == (f_origen, c_origen):
+
+                            self.main_window.MyBoard[fila][col] = 0
+
+                            self.main_window.status_bar.showMessage(
+                                f"💨 ¡BOBA! Ficha soplada en ({fila}, {col}) por omitir su captura.")
+
+                        else:
+
+                            # Si movió OTRA ficha, la que se movió queda a salvo, pero la infractora desaparece de su lugar estático
+
+                            self.main_window.MyBoard[f_inf][c_inf] = 0
+
+                            self.main_window.status_bar.showMessage(
+                                f"💨 ¡BOBA! Ficha soplada en ({f_inf}, {c_inf}) por distraído.")
+
+                        self.main_window.actualizar_contadores_interfaz()
+
+                # Evaluamos la coronación si la pieza que se movió sigue viva en la matriz
+
+                if self.main_window.MyBoard[fila][col] == valor_pieza:
+                    self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+
+                # Limpieza absoluta de estados estándar para el movimiento simple
+
+                self.main_window.pieza_seleccionada = None
+
+                self.main_window.movimientos_validos.clear()
+
+                self.update()
+
+                self.main_window.cambiar_turno("BOT")
+
+                return
+
+
+
 
         else:
             self.main_window.pieza_seleccionada = None
@@ -241,6 +342,10 @@ class TableroDamas(QWidget):
 class DamasGame(QMainWindow):
     def __init__(self):
         super().__init__()
+        # NUEVAS: Reglas booleanas configurables de captura y soplado
+        self.regla_forzar_captura = False  # Por defecto False (Libertad estratégica)
+        self.regla_soplado_automatico = True  # Por defecto True (Castigo implacable de "bobas")
+
         self.MyBoard = [[0 for _ in range(8)] for _ in range(8)]
         self.game_active = True
 
@@ -333,9 +438,32 @@ class DamasGame(QMainWindow):
         self.label_bajas_bot.setFont(font_valores)
         self.label_bajas_bot.setStyleSheet("color: #FF3333; border: none;")
 
-        # NUEVO: Botón interactivo de Reinicio en el Panel Lateral
+        # --- CHECKBOXES DE CONFIGURACIÓN DE REGLAS COMPETITIVAS ---
+        font_checkbox = QFont('MS Sans Serif', 8, QFont.Weight.Bold)
+        stylesheet_chk = """
+            QCheckBox { color: #BBB; border: none; }
+            QCheckBox::indicator { width: 14px; height: 14px; border: 2px solid #555; border-radius: 3px; background: #222; }
+            QCheckBox::indicator:checked { background: #00FF00; border-color: #00FF00; }
+            QCheckBox:hover { color: white; }
+        """
+
+        self.chk_forzar = QCheckBox("Forzar Captura", self.panel_control)
+        self.chk_forzar.setGeometry(12, 250, 150, 20)
+        self.chk_forzar.setFont(font_checkbox)
+        self.chk_forzar.setStyleSheet(stylesheet_chk)
+        self.chk_forzar.setChecked(self.regla_forzar_captura)
+        self.chk_forzar.toggled.connect(self.actualizar_reglasbox)
+
+        self.chk_soplado = QCheckBox("Soplado / Boba", self.panel_control)
+        self.chk_soplado.setGeometry(12, 280, 150, 20)
+        self.chk_soplado.setFont(font_checkbox)
+        self.chk_soplado.setStyleSheet(stylesheet_chk)
+        self.chk_soplado.setChecked(self.regla_soplado_automatico)
+        self.chk_soplado.toggled.connect(self.actualizar_reglasbox)
+
+        # NUEVO: Botón interactivo de Reinicio en el Panel Lateral (Instanciación primero)
         self.btn_reiniciar = QPushButton('REINICIAR', self.panel_control)
-        self.btn_reiniciar.setGeometry(12, 330, 150, 40)
+        self.btn_reiniciar.setGeometry(12, 335, 150, 40)
         self.btn_reiniciar.setFont(font_titulos)
         self.btn_reiniciar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_reiniciar.setStyleSheet("""
@@ -611,16 +739,16 @@ class DamasGame(QMainWindow):
             return []
 
         for df, dc in direcciones:
-            # LÍNEA CORREGIDA: Comparación directa de la tupla (df, dc) contra vector_prohibido
-            if vector_prohibido and (df == vector_prohibido[0] and dc == vector_prohibido[1]):
+            # LÍNEA CORREGIDA: Comparación nativa de tuplas para evitar cortocircuitos en Python
+            if vector_prohibido and (df, dc) == vector_prohibido:
                 continue
 
-            if tipo_pieza == 4:  # LÓGICA DE REINA VOLADORA EN COMBO
+            if tipo_pieza == 4:  # LÓGICA DE REINA VOLADORA EN COMBO (CORREGIDA)
                 f_actual = fila + df
                 c_actual = col + dc
                 enemigo_detectado = None
 
-                # Lanzar el rayo a larga distancia desde la celda de aterrizaje actual
+                # Lanzar el rayo a larga distancia por la diagonal
                 while 0 <= f_actual < 8 and 0 <= c_actual < 8:
                     val_celda = self.MyBoard[f_actual][c_actual]
 
@@ -630,13 +758,12 @@ class DamasGame(QMainWindow):
                         elif val_celda != 0:  # Chocó con pieza aliada propia
                             break
                     else:
-                        # Si ya cruzó al enemigo, la primera casilla detrás DEBE estar vacía
+                        # Si ya cruzó al enemigo, puede aterrizar en CUALQUIER casilla vacía continua
                         if val_celda == 0:
-                            # ¡Es un salto de combo legal de largo alcance!
                             saltos_encontrados.append((f_actual, c_actual))
-                        # En damas oficiales, la reina puede frenar en cualquiera de las casillas vacías
-                        # posteriores, pero para el escaneo de combo continuo registramos el aterrizaje inmediato.
-                        break
+                        else:
+                            # Bloqueado por otra pieza detrás del enemigo
+                            break
 
                     f_actual += df
                     c_actual += dc
@@ -753,6 +880,23 @@ class DamasGame(QMainWindow):
 
         # 5. Notificar en la barra de estado
         self.status_bar.showMessage("Partida reiniciada con éxito. Tu turno (Fichas Blancas).")
+
+    def actualizar_reglasbox(self):
+        """Sincroniza el estado de los componentes visuales con el motor de juego."""
+        self.regla_forzar_captura = self.chk_forzar.isChecked()
+        self.regla_soplado_automatico = self.chk_soplado.isChecked()
+
+    def obtener_todas_las_piezas_con_captura_humano(self):
+        """Escanea globalmente todo el tablero para encontrar qué fichas blancas tienen saltos obligatorios."""
+        piezas_con_salto = []
+        for f in range(8):
+            for col in range(8):
+                if self.MyBoard[f][col] in (2, 4):  # Fichas del humano
+                    if self.calcular_saltos_continuos(f, col):
+                        piezas_con_salto.append((f, col))
+        return piezas_con_salto
+
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
