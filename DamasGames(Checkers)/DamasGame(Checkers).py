@@ -508,13 +508,42 @@ class DamasGame(QMainWindow):
             for col in range(8):
                 tipo_pieza = self.MyBoard[fila][col]
 
+                # --- PROCESAR SOLO FICHAS DEL BOT (1: Peón, 3: Reina) ---
                 if tipo_pieza in (1, 3):
-                    direcciones_fila = [1] if tipo_pieza == 1 else [-1, 1]
 
-                    for df in direcciones_fila:
-                        f_simple = fila + df
-                        f_salto = fila + (df * 2)
-                        f_intermedia = fila + df
+                    # CASO REINA ROJA (3): RAYO VECTORIAL DE LARGO ALCANCE
+                    if tipo_pieza == 3:
+                        direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+                        for df, dc in direcciones:
+                            f_actual, c_actual = fila + df, col + dc
+                            pieza_enemiga_detectada = None
+
+                            while 0 <= f_actual < 8 and 0 <= c_actual < 8:
+                                val_celda = self.MyBoard[f_actual][c_actual]
+
+                                if not pieza_enemiga_detectada:
+                                    if val_celda == 0:
+                                        # Movimiento simple de largo alcance disponible
+                                        movimientos_simples.append(((fila, col), (f_actual, c_actual)))
+                                    elif val_celda in (2, 4):  # Enemigo (Blanco) detectado
+                                        pieza_enemiga_detectada = (f_actual, c_actual)
+                                    else:
+                                        break  # Bloqueado por ficha aliada roja
+                                else:
+                                    if val_celda == 0:
+                                        # Captura de largo alcance válida (guarda origen, destino e intermedia)
+                                        capturas_disponibles.append(
+                                            ((fila, col), (f_actual, c_actual), pieza_enemiga_detectada))
+                                    else:
+                                        break  # Bloqueado por otra pieza detrás del enemigo
+                                f_actual += df
+                                c_actual += dc
+
+                    # CASO PEÓN ROJO (1): MOVIMIENTOS Y CAPTURAS CORTAS (SOLO HACIA ABAJO +1)
+                    else:
+                        f_simple = fila + 1
+                        f_salto = fila + 2
+                        f_intermedia = fila + 1
 
                         if 0 <= f_simple < 8:
                             for c_simple in [col - 1, col + 1]:
@@ -531,6 +560,7 @@ class DamasGame(QMainWindow):
                                         capturas_disponibles.append(
                                             ((fila, col), (f_salto, c_salto), (f_intermedia, c_intermedia)))
 
+        # --- RESOLUCIÓN DEL TURNO DE LA IA ---
         if capturas_disponibles:
             origen, destino, intermedia = random.choice(capturas_disponibles)
             f_orig, c_orig = origen
@@ -538,12 +568,12 @@ class DamasGame(QMainWindow):
             f_int, c_int = intermedia
 
             valor_bot = self.MyBoard[f_orig][c_orig]
-            self.MyBoard[f_int][c_int] = 0
+            self.MyBoard[f_int][c_int] = 0  # Eliminar pieza humana capturada
             self.MyBoard[f_dest][c_dest] = valor_bot
             self.MyBoard[f_orig][c_orig] = 0
 
             self.evaluar_coronacion(f_dest, c_dest, valor_bot)
-            self.status_bar.showMessage(f"El BOT te ha capturado una pieza en ({f_int}, {c_int})")
+            self.status_bar.showMessage(f"🤖 El BOT te ha capturado una pieza en ({f_int}, {c_int})")
             self.actualizar_contadores_interfaz()
 
         elif movimientos_simples:
@@ -556,10 +586,10 @@ class DamasGame(QMainWindow):
             self.MyBoard[f_orig][c_orig] = 0
 
             self.evaluar_coronacion(f_dest, c_dest, valor_bot)
-            self.status_bar.showMessage(f"El BOT movió de ({f_orig}, {c_orig}) a ({f_dest}, {c_dest})")
+            self.status_bar.showMessage(f"🤖 El BOT movió de ({f_orig}, {c_orig}) a ({f_dest}, {c_dest})")
         else:
             self.game_active = False
-            self.status_bar.showMessage("¡Felicidades! El BOT no tiene movimientos. ¡Ganaste!")
+            self.status_bar.showMessage("¡Felicidades! El BOT no tiene movimientos legales. ¡Ganaste!")
             return
 
         self.tablero.update()
@@ -581,8 +611,8 @@ class DamasGame(QMainWindow):
             return []
 
         for df, dc in direcciones:
-            # Regla de No-Retorno en zigzag
-            if vector_prohibido and (df == vector_prohibido and dc == vector_prohibido):
+            # LÍNEA CORREGIDA: Comparación directa de la tupla (df, dc) contra vector_prohibido
+            if vector_prohibido and (df == vector_prohibido[0] and dc == vector_prohibido[1]):
                 continue
 
             if tipo_pieza == 4:  # LÓGICA DE REINA VOLADORA EN COMBO
