@@ -1,10 +1,25 @@
 import sys
+import traceback
+import faulthandler
 import random
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStatusBar, QLabel, QMenuBar, QPushButton, QCheckBox
 from PyQt6.QtCore import Qt, QPoint, QTimer
 # CORREGIDO: Se añade QFont a las importaciones de QtGui
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
 
+# Habilita el manejador de fallos para imprimir la pila antes de colapsar
+faulthandler.enable()
+
+def hook_de_excepcion(tipo, valor, tb):
+    """Captura errores de Qt antes del colapso del sistema."""
+    mensaje = "".join(traceback.format_exception(tipo, valor, tb))
+    print(mensaje)
+    # Guarda el error en un archivo por si la consola se cierra muy rápido
+    with open("error_critico.txt", "w") as f:
+        f.write(mensaje)
+    sys.__excepthook__(tipo, valor, tb)
+
+sys.excepthook = hook_de_excepcion
 
 class TableroDamas(QWidget):
     def __init__(self, main_window):
@@ -52,7 +67,6 @@ class TableroDamas(QWidget):
                 self.main_window.MyBoard[f_origen][c_origen] = 0
                 self.main_window.actualizar_contadores_interfaz()
 
-                # Regla de Oro: Si corona en la fila 0, el combo finaliza reglamentariamente de inmediato
                 # Regla de Oro: Si corona en la fila 0 durante un combo, finaliza de inmediato
                 if valor_pieza == 2 and fila == 0:
                     self.main_window.MyBoard[fila][col] = 4  # Forzar transformación física en la matriz
@@ -68,12 +82,10 @@ class TableroDamas(QWidget):
                     return
 
                 # Escanear si nacerán MÁS saltos legales desde esta nueva posición de aterrizaje
-                # Se pasa el vector inverso para prohibir el regreso hacia atrás en zigzag
                 saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
                                                                                vector_prohibido=(-df_usado, -dc_usado))
 
                 if saltos_siguientes:
-                    # El combo se extiende: Bloquear la selección en la ficha actual
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
                     self.main_window.movimientos_validos = saltos_siguientes
@@ -81,7 +93,6 @@ class TableroDamas(QWidget):
                     self.update()
                     self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                 else:
-                    # El combo terminó de forma natural: Apagar timers y transferir al BOT
                     self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
@@ -91,42 +102,46 @@ class TableroDamas(QWidget):
                     self.main_window.cambiar_turno("BOT")
             return
 
-        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL MOVIMIENTO DEL JUGADOR) ---
+        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL JUGADOR) ---
         if self.main_window.MyBoard[fila][col] in (2, 4):
+            # 1. Filtro de Forzar Captura
+            if self.main_window.regla_forzar_captura:
+                piezas_obligadas = self.main_window.obtener_todas_las_piezas_con_captura_humano()
+                if piezas_obligadas and (fila, col) not in piezas_obligadas:
+                    self.main_window.pieza_seleccionada = None
+                    self.main_window.movimientos_validos.clear()
+                    self.main_window.status_bar.showMessage("⚠️ ¡TORNEO! Hay capturas obligatorias. Elige otra pieza.")
+                    self.update()
+                    return
+
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
 
-            # INYECCIÓN INTELIGENTE: Si está activado "Forzar Captura", filtramos dejando SOLO los saltos
             if self.main_window.regla_forzar_captura:
-                # El método calcular_movimientos_validos_humano obtiene tanto pasos simples como saltos.
-                # Identificamos un salto porque la distancia de filas es mayor a 1 celda (tanto para peón como reina)
                 saltos_obligatorios = []
                 for f_v, c_v in self.main_window.movimientos_validos:
-                    # Validar si en el trayecto intermedio existe una captura real
                     df_u = 1 if f_v > fila else -1
                     dc_u = 1 if c_v > col else -1
                     f_s, c_s = fila + df_u, col + dc_u
+                    capture_found = False
                     while f_s != f_v and c_s != c_v:
                         if self.main_window.MyBoard[f_s][c_s] in (1, 3):
-                            saltos_obligatorios.append((f_v, c_v))
+                            capture_found = True
                             break
                         f_s += df_u
                         c_s += dc_u
-
-                # Si existen capturas obligatorias en esta ficha, borramos los pasos simples de aproximación
+                    if capture_found:
+                        saltos_obligatorios.append((f_v, c_v))
                 if saltos_obligatorios:
                     self.main_window.movimientos_validos = saltos_obligatorios
-                    self.main_window.status_bar.showMessage("¡Modo Torneo! Estás obligado a ejecutar la captura.")
 
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
             self.update()
 
-
-        elif (fila, col) in self.main_window.movimientos_validos:
+        elif self.main_window.pieza_seleccionada and (fila, col) in self.main_window.movimientos_validos:
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # 1. DETECTAR SI EN LA DIAGONAL CRUZADA EXISTIÓ UNA CAPTURA REAL
             fue_salto_captura = False
             df_usado = 1 if fila > f_origen else -1
             dc_usado = 1 if col > c_origen else -1
@@ -135,133 +150,78 @@ class TableroDamas(QWidget):
             c_scan = c_origen + dc_usado
             while f_scan != fila and c_scan != col:
                 if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
-                    self.main_window.MyBoard[f_scan][c_scan] = 0  # ¡Eliminada!
+                    self.main_window.MyBoard[f_scan][c_scan] = 0
                     fue_salto_captura = True
                     break
                 f_scan += df_usado
                 c_scan += dc_usado
 
-            # Trasladar la pieza en la matriz real
+            # Trasladar pieza
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
             if fue_salto_captura:
                 self.main_window.actualizar_contadores_interfaz()
-                self.main_window.status_bar.showMessage("¡Has capturado una ficha enemiga!")
-
-                # 1. Evaluar e inyectar la coronación de forma inmediata si corresponde
                 self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
-                # 2. Freno estricto de combo si se acaba de coronar en este turno (Nace pasiva)
                 if self.main_window.MyBoard[fila][col] == 4 and valor_pieza == 2:
+                    # Finalizar turno tras coronar
                     self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
-                    self.main_window.pieza_en_combo = None
                     self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
                     return
 
-                # 3. ESCANEAR SI NACE UN COMBO MÚLTIPLE DESDE LA NUEVA CASILLA DE ATERRIZAJE
-                saltos_siguientes = self.main_window.calcular_saltos_continuos(
-                    fila, col, vector_prohibido=(-df_usado, -dc_usado)
-                )
-
+                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
+                                                                               vector_prohibido=(-df_usado, -dc_usado))
                 if saltos_siguientes:
-                    # El combo continúa en la misma ficha: levantar estado de combo
                     self.main_window.en_combo_captura = True
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
                     self.main_window.movimientos_validos = saltos_siguientes
-                    self.main_window.status_bar.showMessage(
-                        "¡Captura múltiple detectada! Tienes 3 segundos para continuar.")
                     self.update()
                     self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                     return
                 else:
-                    # Si no hay más capturas continuas en esta cadena, el turno termina limpiamente
                     self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
                     return
-
-
-
             else:
-
-                # --- CASO: EL MOVIMIENTO FUE UN PASO SIMPLE REGULAR DE APROXIMACIÓN ---
-
-                self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
-
-                # REGLA DE SOPLADO INMEDIATO GLOBAL
-
+                # --- MOVIMIENTO SIMPLE CON RADAR DE SOPLADO CORREGIDO ---
+                fue_soplada = False
                 if self.main_window.regla_soplado_automatico:
-
-                    # 1. Aislamiento matemático: Revertimos temporalmente el tablero al inicio del turno
-
                     self.main_window.MyBoard[f_origen][c_origen] = valor_pieza
-
                     self.main_window.MyBoard[fila][col] = 0
-
-                    # 2. El radar busca si existía CUALQUIER ficha con posibilidad de comer en el tablero
-
                     fichas_infractoras = self.main_window.obtener_todas_las_piezas_con_captura_humano()
-
-                    # 3. Devolvemos la matriz a su estado post-movimiento
-
                     self.main_window.MyBoard[f_origen][c_origen] = 0
-
                     self.main_window.MyBoard[fila][col] = valor_pieza
 
                     if fichas_infractoras:
-
-                        # ¡Infracción global detectada! Alguien omitió comer.
-
-                        # Castigamos eliminando la ficha infractora real (o la primera de la lista si hay varias)
-
+                        # CORRECCIÓN AQUÍ: Desempaquetar la tupla en dos enteros
                         f_inf, c_inf = fichas_infractoras[0]
 
-                        # Si la ficha infractora era la misma que se movió, la borramos de su nueva posición
-
                         if (f_inf, c_inf) == (f_origen, c_origen):
-
                             self.main_window.MyBoard[fila][col] = 0
-
-                            self.main_window.status_bar.showMessage(
-                                f"💨 ¡BOBA! Ficha soplada en ({fila}, {col}) por omitir su captura.")
-
+                            self.main_window.status_bar.showMessage(f"💨 ¡BOBA! Soplada en ({fila}, {col})")
                         else:
-
-                            # Si movió OTRA ficha, la que se movió queda a salvo, pero la infractora desaparece de su lugar estático
-
                             self.main_window.MyBoard[f_inf][c_inf] = 0
-
-                            self.main_window.status_bar.showMessage(
-                                f"💨 ¡BOBA! Ficha soplada en ({f_inf}, {c_inf}) por distraído.")
+                            self.main_window.status_bar.showMessage(f"💨 ¡BOBA! Soplada en ({f_inf}, {c_inf})")
 
                         self.main_window.actualizar_contadores_interfaz()
+                        fue_soplada = True
 
-                # Evaluamos la coronación si la pieza que se movió sigue viva en la matriz
-
-                if self.main_window.MyBoard[fila][col] == valor_pieza:
+                if not fue_soplada:
                     self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
-                # Limpieza absoluta de estados estándar para el movimiento simple
-
                 self.main_window.pieza_seleccionada = None
-
                 self.main_window.movimientos_validos.clear()
-
                 self.update()
-
                 self.main_window.cambiar_turno("BOT")
-
                 return
-
-
-
 
         else:
             self.main_window.pieza_seleccionada = None
@@ -345,6 +305,10 @@ class DamasGame(QMainWindow):
         # NUEVAS: Reglas booleanas configurables de captura y soplado
         self.regla_forzar_captura = False  # Por defecto False (Libertad estratégica)
         self.regla_soplado_automatico = True  # Por defecto True (Castigo implacable de "bobas")
+
+        # NUEVAS: Reglas configurables para el BOT
+        self.regla_bot_forzar = False  # Default: False (Permite al BOT regalar piezas por estrategia)
+        self.regla_bot_soplado = True  # Default: True (El BOT también sufre soplados si omite comer)
 
         self.MyBoard = [[0 for _ in range(8)] for _ in range(8)]
         self.game_active = True
@@ -439,27 +403,65 @@ class DamasGame(QMainWindow):
         self.label_bajas_bot.setStyleSheet("color: #FF3333; border: none;")
 
         # --- CHECKBOXES DE CONFIGURACIÓN DE REGLAS COMPETITIVAS ---
-        font_checkbox = QFont('MS Sans Serif', 8, QFont.Weight.Bold)
+        font_subtitulos = QFont('MS Sans Serif', 8, QFont.Weight.Bold)
         stylesheet_chk = """
             QCheckBox { color: #BBB; border: none; }
-            QCheckBox::indicator { width: 14px; height: 14px; border: 2px solid #555; border-radius: 3px; background: #222; }
+            QCheckBox::indicator { width: 12px; height: 12px; border: 2px solid #555; border-radius: 3px; background: #222; }
             QCheckBox::indicator:checked { background: #00FF00; border-color: #00FF00; }
             QCheckBox:hover { color: white; }
         """
 
+        # --- SECCIÓN HUMANO ---
+        lbl_humano_rules = QLabel('REGLAS JUGADOR:', self.panel_control)
+        lbl_humano_rules.setGeometry(12, 175, 150, 15)
+        lbl_humano_rules.setFont(font_subtitulos)
+        lbl_humano_rules.setStyleSheet("color: #55FF55; border: none;")
+
         self.chk_forzar = QCheckBox("Forzar Captura", self.panel_control)
-        self.chk_forzar.setGeometry(12, 250, 150, 20)
-        self.chk_forzar.setFont(font_checkbox)
+        self.chk_forzar.setGeometry(12, 195, 150, 18)
+        self.chk_forzar.setFont(font_subtitulos)
         self.chk_forzar.setStyleSheet(stylesheet_chk)
         self.chk_forzar.setChecked(self.regla_forzar_captura)
         self.chk_forzar.toggled.connect(self.actualizar_reglasbox)
 
         self.chk_soplado = QCheckBox("Soplado / Boba", self.panel_control)
-        self.chk_soplado.setGeometry(12, 280, 150, 20)
-        self.chk_soplado.setFont(font_checkbox)
+        self.chk_soplado.setGeometry(12, 215, 150, 18)
+        self.chk_soplado.setFont(font_subtitulos)
         self.chk_soplado.setStyleSheet(stylesheet_chk)
         self.chk_soplado.setChecked(self.regla_soplado_automatico)
         self.chk_soplado.toggled.connect(self.actualizar_reglasbox)
+
+        # --- NUEVA SECCIÓN BOT ---
+        lbl_bot_rules = QLabel('REGLAS BOT (IA):', self.panel_control)
+        lbl_bot_rules.setGeometry(12, 245, 150, 15)
+        lbl_bot_rules.setFont(font_subtitulos)
+        lbl_bot_rules.setStyleSheet("color: #FF5555; border: none;")
+
+        self.chk_bot_forzar = QCheckBox("Forzar Captura", self.panel_control)
+        self.chk_bot_forzar.setGeometry(12, 265, 150, 18)
+        self.chk_bot_forzar.setFont(font_subtitulos)
+        self.chk_bot_forzar.setStyleSheet(stylesheet_chk)
+        self.chk_bot_forzar.setChecked(self.regla_bot_forzar)
+        self.chk_bot_forzar.toggled.connect(self.actualizar_reglasbox)
+
+        self.chk_bot_soplado = QCheckBox("Soplado / Boba", self.panel_control)
+        self.chk_bot_soplado.setGeometry(12, 285, 150, 18)
+        self.chk_bot_soplado.setFont(font_subtitulos)
+        self.chk_bot_soplado.setStyleSheet(stylesheet_chk)
+        self.chk_bot_soplado.setChecked(self.regla_bot_soplado)
+        self.chk_bot_soplado.toggled.connect(self.actualizar_reglasbox)
+
+        # Botón de Reinicio reubicado abajo de todo
+        self.btn_reiniciar = QPushButton('REINICIAR', self.panel_control)
+        self.btn_reiniciar.setGeometry(12, 335, 150, 40)
+        self.btn_reiniciar.setFont(font_titulos)
+        self.btn_reiniciar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reiniciar.setStyleSheet("""
+            QPushButton { background-color: #222; color: #00FF00; border: 2px solid #00FF00; border-radius: 5px; }
+            QPushButton:hover { background-color: #00FF00; color: #000; }
+            QPushButton:pressed { background-color: #009900; }
+        """)
+        self.btn_reiniciar.clicked.connect(self.reiniciar_partida)
 
         # NUEVO: Botón interactivo de Reinicio en el Panel Lateral (Instanciación primero)
         self.btn_reiniciar = QPushButton('REINICIAR', self.panel_control)
@@ -492,9 +494,25 @@ class DamasGame(QMainWindow):
         self.turno_actual = nuevo_turno
         if nuevo_turno == "BOT":
             self.status_bar.showMessage("El BOT Rojo está pensando...")
+
+            # BLOQUEO DE SEGURIDAD: Tú ya no puedes alterar los checkboxes del BOT ni los tuyos en su turno
+            self.chk_forzar.setEnabled(False)
+            self.chk_soplado.setEnabled(False)
+            self.chk_bot_forzar.setEnabled(False)
+            self.chk_bot_soplado.setEnabled(False)
+
+            # Inteligencia Artificial Evaluativa: El BOT decide sus checkboxes en tiempo real aquí
+            self.analizar_y_calibrar_cerebro_bot()
+
             QTimer.singleShot(600, self.ejecutar_turno_bot)
         else:
             self.status_bar.showMessage("Tu turno (Fichas Blancas).")
+
+            # Al regresar a tu turno, recuperas el control de tus cajas, pero las del BOT quedan bloqueadas para ti
+            self.chk_forzar.setEnabled(True)
+            self.chk_soplado.setEnabled(True)
+            self.chk_bot_forzar.setEnabled(False)
+            self.chk_bot_soplado.setEnabled(False)
 
     def evaluar_coronacion(self, fila, col, bando):
         if bando == 2 and fila == 0:
@@ -626,156 +644,174 @@ class DamasGame(QMainWindow):
                     c_actual += dc
 
     def ejecutar_turno_bot(self):
+        """Analiza el tablero y ejecuta el movimiento o captura del BOT."""
         if not self.game_active:
             return
 
         capturas_disponibles = []
         movimientos_simples = []
 
+        # 1. Escaneo de todas las piezas del BOT (1 y 3)
         for fila in range(8):
             for col in range(8):
-                tipo_pieza = self.MyBoard[fila][col]
+                if self.MyBoard[fila][col] in (1, 3):
+                    # Buscamos capturas usando la función Universal
+                    saltos = self.calcular_saltos_continuos(fila, col)
+                    for s_dest in saltos:
+                        f_dest, c_dest = s_dest
+                        # Calcular pieza intermedia para eliminarla
+                        df = 1 if f_dest > fila else -1
+                        dc = 1 if c_dest > col else -1
+                        f_int, c_int = fila + df, col + dc
+                        # Si es reina, busca la pieza enemiga en el camino largo
+                        if self.MyBoard[fila][col] == 3:
+                            while self.MyBoard[f_int][c_int] == 0:
+                                f_int += df
+                                c_int += dc
+                        capturas_disponibles.append(((fila, col), (f_dest, c_dest), (f_int, c_int)))
 
-                # --- PROCESAR SOLO FICHAS DEL BOT (1: Peón, 3: Reina) ---
-                if tipo_pieza in (1, 3):
+                    # Si no hay capturas obligatorias o Forzar está en False, buscamos movimientos simples
+                    if not capturas_disponibles or not self.regla_bot_forzar:
+                        self.obtener_movimientos_simples_bot(fila, col, movimientos_simples)
 
-                    # CASO REINA ROJA (3): RAYO VECTORIAL DE LARGO ALCANCE
-                    if tipo_pieza == 3:
-                        direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-                        for df, dc in direcciones:
-                            f_actual, c_actual = fila + df, col + dc
-                            pieza_enemiga_detectada = None
-
-                            while 0 <= f_actual < 8 and 0 <= c_actual < 8:
-                                val_celda = self.MyBoard[f_actual][c_actual]
-
-                                if not pieza_enemiga_detectada:
-                                    if val_celda == 0:
-                                        # Movimiento simple de largo alcance disponible
-                                        movimientos_simples.append(((fila, col), (f_actual, c_actual)))
-                                    elif val_celda in (2, 4):  # Enemigo (Blanco) detectado
-                                        pieza_enemiga_detectada = (f_actual, c_actual)
-                                    else:
-                                        break  # Bloqueado por ficha aliada roja
-                                else:
-                                    if val_celda == 0:
-                                        # Captura de largo alcance válida (guarda origen, destino e intermedia)
-                                        capturas_disponibles.append(
-                                            ((fila, col), (f_actual, c_actual), pieza_enemiga_detectada))
-                                    else:
-                                        break  # Bloqueado por otra pieza detrás del enemigo
-                                f_actual += df
-                                c_actual += dc
-
-                    # CASO PEÓN ROJO (1): MOVIMIENTOS Y CAPTURAS CORTAS (SOLO HACIA ABAJO +1)
-                    else:
-                        f_simple = fila + 1
-                        f_salto = fila + 2
-                        f_intermedia = fila + 1
-
-                        if 0 <= f_simple < 8:
-                            for c_simple in [col - 1, col + 1]:
-                                if 0 <= c_simple < 8 and self.MyBoard[f_simple][c_simple] == 0:
-                                    movimientos_simples.append(((fila, col), (f_simple, c_simple)))
-
-                        if 0 <= f_salto < 8:
-                            for c_dir in [-1, 1]:
-                                c_intermedia = col + c_dir
-                                c_salto = col + (c_dir * 2)
-                                if 0 <= c_salto < 8:
-                                    vecino = self.MyBoard[f_intermedia][c_intermedia]
-                                    if vecino in (2, 4) and self.MyBoard[f_salto][c_salto] == 0:
-                                        capturas_disponibles.append(
-                                            ((fila, col), (f_salto, c_salto), (f_intermedia, c_intermedia)))
-
-        # --- RESOLUCIÓN DEL TURNO DE LA IA ---
+        # 2. Resolución de la acción
         if capturas_disponibles:
+            # El BOT siempre prioriza capturar si existen
             origen, destino, intermedia = random.choice(capturas_disponibles)
             f_orig, c_orig = origen
             f_dest, c_dest = destino
             f_int, c_int = intermedia
 
             valor_bot = self.MyBoard[f_orig][c_orig]
-            self.MyBoard[f_int][c_int] = 0  # Eliminar pieza humana capturada
-            self.MyBoard[f_dest][c_dest] = valor_bot
             self.MyBoard[f_orig][c_orig] = 0
-
-            self.evaluar_coronacion(f_dest, c_dest, valor_bot)
-            self.status_bar.showMessage(f"🤖 El BOT te ha capturado una pieza en ({f_int}, {c_int})")
+            self.MyBoard[f_int][c_int] = 0  # Humano eliminado
+            self.MyBoard[f_dest][c_dest] = valor_bot
             self.actualizar_contadores_interfaz()
+
+            # --- EVALUAR COMBO CONTINUO ---
+            df_u = 1 if f_dest > f_orig else -1
+            dc_u = 1 if c_dest > c_orig else -1
+            # Importante: Prohibimos el regreso en el combo
+            saltos_extras = self.calcular_saltos_continuos(f_dest, c_dest, vector_prohibido=(-df_u, -dc_u))
+
+            if saltos_extras:
+                self.status_bar.showMessage("🤖 BOT en combo múltiple...")
+                self.tablero.update()
+                # El BOT salta de nuevo tras 600ms (efecto visual)
+                QTimer.singleShot(600, self.ejecutar_turno_bot)
+                return
+            else:
+                self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
 
         elif movimientos_simples:
             origen, destino = random.choice(movimientos_simples)
             f_orig, c_orig = origen
             f_dest, c_dest = destino
-
             valor_bot = self.MyBoard[f_orig][c_orig]
-            self.MyBoard[f_dest][c_dest] = valor_bot
-            self.MyBoard[f_orig][c_orig] = 0
 
-            self.evaluar_coronacion(f_dest, c_dest, valor_bot)
-            self.status_bar.showMessage(f"🤖 El BOT movió de ({f_orig}, {c_orig}) a ({f_dest}, {c_dest})")
+            # Si el BOT hace un simple pero tenía capturas en el tablero (y Soplado está ON)
+            if self.regla_bot_soplado and self.verificar_si_bot_tenia_capturas_globales():
+                self.MyBoard[f_orig][c_orig] = 0  # Soplado: no llega al destino
+                self.status_bar.showMessage("💨 ¡Soplado al BOT por omitir captura!")
+                self.finalizar_turno_bot()
+            else:
+                self.MyBoard[f_orig][c_orig] = 0
+                self.MyBoard[f_dest][c_dest] = valor_bot
+                self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
         else:
+            # Bloqueo total del BOT
             self.game_active = False
-            self.status_bar.showMessage("¡Felicidades! El BOT no tiene movimientos legales. ¡Ganaste!")
+            self.status_bar.showMessage("¡HAS GANADO! El BOT no tiene movimientos.")
+
             return
 
         self.tablero.update()
         self.cambiar_turno("HUMANO")
 
+    def finalizar_turno_bot(self, f=None, c=None, valor=None):
+        """Ejecuta coronación, refresca tablero y cambia turno al humano."""
+        if f is not None and c is not None:
+            self.evaluar_coronacion(f, c, valor)
+        self.tablero.update()
+        self.cambiar_turno("HUMANO")
+
+    def verificar_si_bot_tenia_capturas_globales(self):
+        """Escanea si el BOT tenía alguna captura obligatoria disponible en el tablero."""
+        for f in range(8):
+            for c in range(8):
+                if self.MyBoard[f][c] in (1, 3):
+                    if self.calcular_saltos_continuos(f, c):
+                        return True
+        return False
+
+
+    def obtener_movimientos_simples_bot(self, f, c, lista_resultados):
+        """Calcula pasos de aproximación para peones y reinas del BOT."""
+        pieza = self.MyBoard[f][c]
+        # Peón rojo (1) solo baja, Reina (3) todas direcciones
+        direcciones = [(1, -1), (1, 1)] if pieza == 1 else [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+        for df, dc in direcciones:
+            nf, nc = f + df, c + dc
+            if pieza == 3:  # Rayo de Reina
+                while 0 <= nf < 8 and 0 <= nc < 8 and self.MyBoard[nf][nc] == 0:
+                    lista_resultados.append(((f, c), (nf, nc)))
+                    nf += df
+                    nc += dc
+            else:  # Paso de Peón
+                if 0 <= nf < 8 and 0 <= nc < 8 and self.MyBoard[nf][nc] == 0:
+                    lista_resultados.append(((f, c), (nf, nc)))
+
     def calcular_saltos_continuos(self, fila, col, vector_prohibido=None):
         """
-        PERFECTA: Escanea saltos de combo reales e inmediatos para peones y Reinas.
-        Soporta capturas a larga distancia para Reinas, eliminando falsos positivos.
+        UNIVERSAL: Escanea saltos de combo para CUALQUIER bando (Humano o BOT).
+        Detecta automáticamente quién es el enemigo según la pieza en (fila, col).
         """
         saltos_encontrados = []
         tipo_pieza = self.MyBoard[fila][col]
+        if tipo_pieza == 0: return []
 
-        if tipo_pieza == 2:  # Peón blanco: solo sube (-1)
+        # 1. Definir quién es el enemigo y las direcciones
+        # Si la pieza es blanca (2, 4), el enemigo es rojo (1, 3).
+        # Si la pieza es roja (1, 3), el enemigo es blanco (2, 4).
+        es_blanca = tipo_pieza in (2, 4)
+        enemigos = (1, 3) if es_blanca else (2, 4)
+
+        if tipo_pieza == 2:  # Peón blanco: solo sube
             direcciones = [(-1, -1), (-1, 1)]
-        elif tipo_pieza == 4:  # Reina blanca: las 4 direcciones
+        elif tipo_pieza == 1:  # Peón rojo: solo baja
+            direcciones = [(1, -1), (1, 1)]
+        else:  # Reinas (3 o 4): todas las direcciones
             direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-        else:
-            return []
 
         for df, dc in direcciones:
-            # LÍNEA CORREGIDA: Comparación nativa de tuplas para evitar cortocircuitos en Python
+            # Regla de No-Retorno
             if vector_prohibido and (df, dc) == vector_prohibido:
                 continue
 
-            if tipo_pieza == 4:  # LÓGICA DE REINA VOLADORA EN COMBO (CORREGIDA)
-                f_actual = fila + df
-                c_actual = col + dc
+            if tipo_pieza in (3, 4):  # LÓGICA DE REINA (Largo alcance)
+                f_actual, c_actual = fila + df, col + dc
                 enemigo_detectado = None
-
-                # Lanzar el rayo a larga distancia por la diagonal
                 while 0 <= f_actual < 8 and 0 <= c_actual < 8:
                     val_celda = self.MyBoard[f_actual][c_actual]
-
                     if not enemigo_detectado:
-                        if val_celda in (1, 3):  # Encontró pieza enemiga (roja o reina)
+                        if val_celda in enemigos:
                             enemigo_detectado = (f_actual, c_actual)
-                        elif val_celda != 0:  # Chocó con pieza aliada propia
+                        elif val_celda != 0:  # Chocó con aliada
                             break
                     else:
-                        # Si ya cruzó al enemigo, puede aterrizar en CUALQUIER casilla vacía continua
                         if val_celda == 0:
                             saltos_encontrados.append((f_actual, c_actual))
-                        else:
-                            # Bloqueado por otra pieza detrás del enemigo
+                        else:  # Bloqueado tras el enemigo
                             break
-
                     f_actual += df
                     c_actual += dc
-            else:  # LÓGICA DE PEÓN ESTABLE
-                f_intermedia = fila + df
-                f_salto = fila + (df * 2)
-                c_intermedia = col + dc
-                c_salto = col + (dc * 2)
-
-                if 0 <= f_salto < 8 and 0 <= c_salto < 8:
-                    if self.MyBoard[f_intermedia][c_intermedia] in (1, 3) and self.MyBoard[f_salto][c_salto] == 0:
-                        saltos_encontrados.append((f_salto, c_salto))
+            else:  # LÓGICA DE PEÓN (Corto alcance)
+                f_int, c_int = fila + df, col + dc
+                f_s, c_s = fila + (df * 2), col + (dc * 2)
+                if 0 <= f_s < 8 and 0 <= c_s < 8:
+                    if self.MyBoard[f_int][c_int] in enemigos and self.MyBoard[f_s][c_s] == 0:
+                        saltos_encontrados.append((f_s, c_s))
 
         return saltos_encontrados
 
@@ -885,6 +921,8 @@ class DamasGame(QMainWindow):
         """Sincroniza el estado de los componentes visuales con el motor de juego."""
         self.regla_forzar_captura = self.chk_forzar.isChecked()
         self.regla_soplado_automatico = self.chk_soplado.isChecked()
+        self.regla_bot_forzar = self.chk_bot_forzar.isChecked()
+        self.regla_bot_soplado = self.chk_bot_soplado.isChecked()
 
     def obtener_todas_las_piezas_con_captura_humano(self):
         """Escanea globalmente todo el tablero para encontrar qué fichas blancas tienen saltos obligatorios."""
@@ -896,6 +934,37 @@ class DamasGame(QMainWindow):
                         piezas_con_salto.append((f, col))
         return piezas_con_salto
 
+    def analizar_y_calibrar_cerebro_bot(self):
+        """
+        NUEVO: Capa de Inteligencia Artificial Psicológica.
+        El BOT evalúa el tablero y decide si le conviene forzar capturas o arriesgar.
+        """
+        vivas_rojas = 0
+        vivas_blancas = 0
+        for f in range(8):
+            for c in range(8):
+                if self.MyBoard[f][c] in (1, 3):
+                    vivas_rojas += 1
+                elif self.MyBoard[f][c] in (2, 4):
+                    vivas_blancas += 1
+
+        # ESTRATEGIA A: Si el BOT va perdiendo en piezas, se vuelve "agresivo y tramposo"
+        if vivas_rojas < vivas_blancas:
+            # Apaga 'Forzar Captura' para permitirse hacer movimientos trampa y sacrificios
+            self.chk_bot_forzar.setChecked(False)
+            # Mantiene el soplado activo para castigar al humano si se confía
+            self.chk_bot_soplado.setChecked(True)
+            self.status_bar.showMessage("🤖 El BOT nota desventaja y cambia a modo: TÁCTICA CLÁSICA.")
+
+        # ESTRATEGIA B: Si el BOT va ganando o están empatados, juega estricto y seguro
+        else:
+            # Juega modo torneo estricto, no regala nada y obliga a cumplir la ley
+            self.chk_bot_forzar.setChecked(True)
+            self.chk_bot_soplado.setChecked(True)
+            self.status_bar.showMessage("🤖 El BOT mantiene el control en modo: REGLAMENTO DE TORNEO.")
+
+        # Sincronizamos las variables lógicas con los clicks automáticos del BOT
+        self.actualizar_reglasbox()
 
 
 if __name__ == '__main__':
@@ -903,3 +972,25 @@ if __name__ == '__main__':
     game = DamasGame()
     game.show()
     sys.exit(app.exec())
+
+def log_uncaught_exceptions(ex_cls, ex, tb):
+    text = '{}: {}:\n'.format(ex_cls.__name__, ex)
+    text += ''.join(traceback.format_tb(tb))
+    print(text)
+    # También lo guardamos en un archivo por si la consola se cierra muy rápido
+    with open("crash_log.txt", "w") as f:
+        f.write(text)
+    sys.exit(1)
+
+def except_hook(cls, exception, tb):
+    """Captura errores de Qt antes de que la ventana colapse."""
+    text = "".join(traceback.format_exception(cls, exception, tb))
+    print(text)
+    # Guarda el error en un archivo de texto por si la consola se cierra
+    with open("crash_log.txt", "w") as f:
+        f.write(text)
+    sys.__excepthook__(cls, exception, tb)
+
+#sys.excepthook = log_uncaught_exceptions
+
+sys.excepthook = except_hook
