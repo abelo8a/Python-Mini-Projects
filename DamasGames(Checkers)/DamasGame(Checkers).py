@@ -29,7 +29,7 @@ class TableroDamas(QWidget):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        """Maneja el turno del humano con soporte de combos múltiples reales de largo alcance y no-retorno."""
+        """Maneja el turno del humano con soporte de combos múltiples reales, Foto Pre-Movimiento y Ley de Máxima Captura."""
         if not self.main_window.game_active or self.main_window.turno_actual != "HUMANO":
             return
 
@@ -101,39 +101,44 @@ class TableroDamas(QWidget):
                     self.update()
                     self.main_window.cambiar_turno("BOT")
             return
-
-        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL JUGADOR) ---
+        # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL MOVIMIENTO DEL JUGADOR) ---
         if self.main_window.MyBoard[fila][col] in (2, 4):
-            # 1. Filtro de Forzar Captura
+            # 1. Filtro estricto de Forzar Captura (Si el checkbox de forzar está activo)
             if self.main_window.regla_forzar_captura:
-                piezas_obligadas = self.main_window.obtener_todas_las_piezas_con_captura_humano()
-                if piezas_obligadas and (fila, col) not in piezas_obligadas:
-                    self.main_window.pieza_seleccionada = None
-                    self.main_window.movimientos_validos.clear()
-                    self.main_window.status_bar.showMessage("⚠️ ¡TORNEO! Hay capturas obligatorias. Elige otra pieza.")
-                    self.update()
-                    return
+                piezas_maximas, peso_max = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+                if piezas_maximas and isinstance(piezas_maximas, list) and len(piezas_maximas) > 0:
+                    if (fila, col) not in piezas_maximas:
+                        self.main_window.pieza_seleccionada = None
+                        self.main_window.movimientos_validos.clear()
+                        self.main_window.status_bar.showMessage(
+                            f"⚠️ ¡LEY DE MÁXIMA CAPTURA! Hay rutas que comen {peso_max} fichas. Elige la correcta.")
+                        self.update()
+                        return
 
             self.main_window.pieza_seleccionada = (fila, col)
             self.main_window.calcular_movimientos_validos_humano(fila, col)
 
+            # 2. Filtrar movimientos si Forzar Captura está activo
             if self.main_window.regla_forzar_captura:
-                saltos_obligatorios = []
+                saltos_validos_por_ley = []
                 for f_v, c_v in self.main_window.movimientos_validos:
                     df_u = 1 if f_v > fila else -1
                     dc_u = 1 if c_v > col else -1
-                    f_s, c_s = fila + df_u, col + dc_u
-                    capture_found = False
-                    while f_s != f_v and c_s != c_v:
-                        if self.main_window.MyBoard[f_s][c_s] in (1, 3):
-                            capture_found = True
-                            break
-                        f_s += df_u
-                        c_s += dc_u
-                    if capture_found:
-                        saltos_obligatorios.append((f_v, c_v))
-                if saltos_obligatorios:
-                    self.main_window.movimientos_validos = saltos_obligatorios
+
+                    val_orig = self.main_window.MyBoard[fila][col]
+                    self.main_window.MyBoard[f_v][c_v] = val_orig
+                    self.main_window.MyBoard[fila][col] = 0
+
+                    peso_rama = 1 + self.main_window.calcular_peso_maximo_captura(f_v, c_v,
+                                                                                  vector_prohibido=(-df_u, -dc_u))
+
+                    self.main_window.MyBoard[fila][col] = val_orig
+                    self.main_window.MyBoard[f_v][c_v] = 0
+
+                    if piezas_maximas and peso_rama == peso_max:
+                        saltos_validos_por_ley.append((f_v, c_v))
+                if saltos_validos_por_ley:
+                    self.main_window.movimientos_validos = saltos_validos_por_ley
 
             self.main_window.status_bar.showMessage(f"Ficha seleccionada en ({fila}, {col})")
             self.update()
@@ -142,10 +147,17 @@ class TableroDamas(QWidget):
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
+            # -----------------------------------------------------------------
+            # FOTO ANALÍTICA PRE-MOVIMIENTO: Guardamos el peso exacto inicial
+            # -----------------------------------------------------------------
+            peso_max_original = 0
+            if self.main_window.regla_soplado_automatico:
+                _, peso_max_original = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
             fue_salto_captura = False
             df_usado = 1 if fila > f_origen else -1
             dc_usado = 1 if col > c_origen else -1
 
+            # Barrido diagonal real para eliminar la pieza enemiga comida
             f_scan = f_origen + df_usado
             c_scan = c_origen + dc_usado
             while f_scan != fila and c_scan != col:
@@ -156,63 +168,82 @@ class TableroDamas(QWidget):
                 f_scan += df_usado
                 c_scan += dc_usado
 
-            # Trasladar pieza
+            # Trasladar la pieza de forma física en la matriz real
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
             if fue_salto_captura:
                 self.main_window.actualizar_contadores_interfaz()
-                self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+                self.main_window.status_bar.showMessage("¡Has capturado una ficha enemiga!")
 
-                if self.main_window.MyBoard[fila][col] == 4 and valor_pieza == 2:
-                    # Finalizar turno tras coronar
-                    self.main_window.interrumpir_timers_combo()
-                    self.main_window.en_combo_captura = False
-                    self.main_window.pieza_seleccionada = None
-                    self.main_window.movimientos_validos.clear()
-                    self.update()
-                    self.main_window.cambiar_turno("BOT")
-                    return
+                # 1. VERIFICAR COMBO CONTINUO INMEDIATO (Mantiene la pieza en su estado actual)
+                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col, vector_prohibido=(-df_usado, -dc_usado))
 
-                saltos_siguientes = self.main_window.calcular_saltos_continuos(fila, col,
-                                                                               vector_prohibido=(-df_usado, -dc_usado))
                 if saltos_siguientes:
                     self.main_window.en_combo_captura = True
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
                     self.main_window.movimientos_validos = saltos_siguientes
+                    self.main_window.status_bar.showMessage("¡Captura múltiple detectada! Tienes 3 segundos para continuar.")
                     self.update()
                     self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                     return
                 else:
+                    # --- LA CADENA DE SALTOS TERMINÓ DEFINITIVAMENTE EN ESTE TURNO ---
+                    fue_soplada_por_peso = False
+                    comidas_realizadas = 1
+
+                    if self.main_window.regla_soplado_automatico:
+                        # AUDITORÍA DIRECTA: Comparamos contra la foto inicial fija tomada en la línea 7
+                        if comidas_realizadas < peso_max_original:
+                            # Re-escaneamos el tablero para castigar a las fichas infractoras estáticas (Ficha A)
+                            piezas_maximas, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+                            if piezas_maximas and isinstance(piezas_maximas, list) and len(piezas_maximas) > 0:
+                                for f_inf, c_inf in piezas_maximas:
+                                    if self.main_window.MyBoard[f_inf][c_inf] in (2, 4):
+                                        self.main_window.MyBoard[f_inf][c_inf] = 0
+                                        self.main_window.status_bar.showMessage(
+                                            f"💨 ¡BOBA DE PESO! Ficha soplada en ({f_inf}, {c_inf}) por omitir ruta de {peso_max_original} comidas.")
+                                        if f_inf == fila and c_inf == col:
+                                            fue_soplada_por_peso = True
+                                self.main_window.actualizar_contadores_interfaz()
+
+                    # 2. EVALUAR CORONACIÓN DEFINITIVA: Libre de cualquier escritura residual inversa
+                    if not fue_soplada_por_peso:
+                        self.main_window.evaluar_coronacion(fila, col, valor_pieza)
+
+                    # Cierre limpio del turno humano y pase al BOT
                     self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.update()
                     self.main_window.cambiar_turno("BOT")
                     return
+
             else:
-                # --- MOVIMIENTO SIMPLE CON RADAR DE SOPLADO CORREGIDO ---
+                # --- CASO: MOVIMIENTO SIMPLE REGULAR DE APROXIMACIÓN ---
+                self.main_window.status_bar.showMessage(f"Movimiento simple a ({fila}, {col})")
+
                 fue_soplada = False
                 if self.main_window.regla_soplado_automatico:
-                    self.main_window.MyBoard[f_origen][c_origen] = valor_pieza
-                    self.main_window.MyBoard[fila][col] = 0
-                    fichas_infractoras = self.main_window.obtener_todas_las_piezas_con_captura_humano()
-                    self.main_window.MyBoard[f_origen][c_origen] = 0
-                    self.main_window.MyBoard[fila][col] = valor_pieza
+                    # Usamos la foto inicial para validar si caminar era ilegal habiendo capturas abiertas
+                    if peso_max_original > 0:
+                        piezas_maximas, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+                        if isinstance(piezas_maximas, list) and len(piezas_maximas) > 0:
+                            infractor = piezas_maximas[0]
+                            f_inf = infractor[0]
+                            c_inf = infractor[1]
 
-                    if fichas_infractoras:
-                        # CORRECCIÓN AQUÍ: Desempaquetar la tupla en dos enteros
-                        f_inf, c_inf = fichas_infractoras[0]
+                            if f_inf == f_origen and c_inf == c_origen:
+                                self.main_window.MyBoard[fila][col] = 0
+                                self.main_window.status_bar.showMessage(
+                                    f"💨 ¡BOBA! Ficha soplada en ({fila}, {col}) por omitir su captura.")
+                                fue_soplada = True
+                            else:
+                                self.main_window.MyBoard[f_inf][c_inf] = 0
+                                self.main_window.status_bar.showMessage(
+                                    f"💨 ¡BOBA! Ficha soplada en ({f_inf}, {c_inf}) por distraído.")
 
-                        if (f_inf, c_inf) == (f_origen, c_origen):
-                            self.main_window.MyBoard[fila][col] = 0
-                            self.main_window.status_bar.showMessage(f"💨 ¡BOBA! Soplada en ({fila}, {col})")
-                        else:
-                            self.main_window.MyBoard[f_inf][c_inf] = 0
-                            self.main_window.status_bar.showMessage(f"💨 ¡BOBA! Soplada en ({f_inf}, {c_inf})")
-
-                        self.main_window.actualizar_contadores_interfaz()
-                        fue_soplada = True
+                            self.main_window.actualizar_contadores_interfaz()
 
                 if not fue_soplada:
                     self.main_window.evaluar_coronacion(fila, col, valor_pieza)
@@ -345,6 +376,20 @@ class DamasGame(QMainWindow):
             for col in range(8):
                 if (fila + col) % 2 != 0:
                     self.MyBoard[fila][col] = 2
+        """TestScenario
+        # Vaciar el tablero por completo primero
+        self.MyBoard = [[0 for _ in range(8)] for _ in range(8)]
+
+        # --- ESCENARIO DE PRUEBA DE MÁXIMA CAPTURA ---
+
+        # 1. FICHA A (Humano, Fila inferior): Tiene un COMBO MÁXIMO DE 2 CAPTURAS
+        self.MyBoard[6][1] = 2  # Tu Peón Blanco (Ficha A)
+        self.MyBoard[5][2] = 1  # Peón Rojo del BOT (Primera comida)
+        self.MyBoard[3][4] = 1  # Peón Rojo del BOT (Segunda comida en cadena)
+
+        # 2. FICHA B (Humano, Fila superior): Tiene una CAPTURA SIMPLE DE 1 FICHA
+        self.MyBoard[4][7] = 2  # Tu Peón Blanco (Ficha B)
+        self.MyBoard[3][6] = 1  # Peón Rojo del BOT (Comida simple aislada)"""
 
     def init_ui(self):
         self.setWindowTitle('Damas Game - IA Laboratory Engine v1.5')
@@ -643,85 +688,243 @@ class DamasGame(QMainWindow):
                     f_actual += df
                     c_actual += dc
 
+    def calcular_peso_maximo_captura(self, fila, col, visitados=None, vector_prohibido=None):
+        """
+        UNIVERSAL v1.7: Escanea de forma predictiva y recursiva todas las rutas posibles
+        de una pieza y devuelve el NÚMERO MÁXIMO de piezas que puede comer en una sola jugada.
+        """
+        if visitados is None:
+            visitados = set()
+
+        saltos_inmediatos = self.calcular_saltos_continuos(fila, col, vector_prohibido)
+        if not saltos_inmediatos:
+            return 0
+
+        max_comidas_desde_aqui = 0
+        tipo_pieza = self.MyBoard[fila][col]
+
+        # Definir enemigos según el bando de la pieza
+        es_blanca = tipo_pieza in (2, 4)
+        enemigos = (1, 3) if es_blanca else (2, 4)
+
+        for s_dest in saltos_inmediatos:
+            f_dest, c_dest = s_dest
+
+            # Identificar la pieza intermedia comida en esta diagonal
+            df = 1 if f_dest > fila else -1
+            dc = 1 if c_dest > col else -1
+            f_int, c_int = fila + df, col + dc
+            if tipo_pieza in (3, 4):  # Si es reina, busca al enemigo en el rayo largo
+                while self.MyBoard[f_int][c_int] == 0:
+                    f_int += df
+                    c_int += dc
+
+            coor_comida = (f_int, c_int)
+
+            # Evitar comer la misma pieza dos veces en la simulación recursiva
+            if coor_comida in visitados:
+                continue
+
+            # --- SIMULACIÓN VIRTUAL DEL MOVIMIENTO (BACKTRACKING) ---
+            visitados.add(coor_comida)
+            val_intermedia = self.MyBoard[f_int][c_int]
+
+            self.MyBoard[f_dest][c_dest] = tipo_pieza
+            self.MyBoard[fila][col] = 0
+            self.MyBoard[f_int][c_int] = 0
+
+            # Llamada recursiva para ver cuántas más puede comer desde el nuevo aterrizaje
+            comidas_futuras = self.calcular_peso_maximo_captura(f_dest, c_dest, visitados, vector_prohibido=(-df, -dc))
+            total_esta_rama = 1 + comidas_futuras
+
+            if total_esta_rama > max_comidas_desde_aqui:
+                max_comidas_desde_aqui = total_esta_rama
+
+            # --- RESTAURACIÓN DEL TABLERO ---
+            self.MyBoard[fila][col] = tipo_pieza
+            self.MyBoard[f_dest][c_dest] = 0
+            self.MyBoard[f_int][c_int] = val_intermedia
+            visitados.remove(coor_comida)
+
+        return max_comidas_desde_aqui
+
+    def obtener_piezas_con_maxima_captura_global(self, bando):
+        """
+        UNIVERSAL v1.7: Devuelve una lista de tuplas [(fila, col)] con las piezas que cumplen
+        estrictamente con la Ley de Máxima Captura para el bando ('HUMANO' o 'BOT').
+        """
+        valores_bando = (2, 4) if bando == "HUMANO" else (1, 3)
+        registro_piezas = {}
+        max_bajas_globales = 0
+
+        for f in range(8):
+            for c in range(8):
+                if self.MyBoard[f][c] in valores_bando:
+                    peso = self.calcular_peso_maximo_captura(f, c)
+                    if peso > 0:
+                        if peso not in registro_piezas:
+                            registro_piezas[peso] = []
+                        registro_piezas[peso].append((f, c))
+                        if peso > max_bajas_globales:
+                            max_bajas_globales = peso
+
+        if max_bajas_globales == 0:
+            return [], 0
+        return registro_piezas[max_bajas_globales], max_bajas_globales
+
     def ejecutar_turno_bot(self):
-        """Analiza el tablero y ejecuta el movimiento o captura del BOT."""
+        """
+        v1.7 STABLE: Motor de la IA adaptativo con soporte de Ley de Máxima Captura.
+        Audita de forma estricta los combos incompletos y las bobas globales del BOT.
+        """
         if not self.game_active:
             return
 
         capturas_disponibles = []
         movimientos_simples = []
 
-        # 1. Escaneo de todas las piezas del BOT (1 y 3)
+        # 1. ESCANEO GLOBAL DE POSIBILIDADES CON CÁLCULO DE PESO (Rutas Máximas)
+        peso_max_bot = 0
+        piezas_maximas_bot = []
+
         for fila in range(8):
             for col in range(8):
-                if self.MyBoard[fila][col] in (1, 3):
-                    # Buscamos capturas usando la función Universal
+                if self.MyBoard[fila][col] in (1, 3):  # Piezas del BOT (Rojas)
+                    # Calculamos el peso máximo de captura predictivo para esta pieza
+                    peso = self.calcular_peso_maximo_captura(fila, col)
+                    if peso > 0:
+                        if peso > peso_max_bot:
+                            peso_max_bot = peso
+                            piezas_maximas_bot = [(fila, col)]
+                        elif peso == peso_max_bot:
+                            piezas_maximas_bot.append((fila, col))
+
+                    # Escanear saltos inmediatos para la toma de acción de este turno
                     saltos = self.calcular_saltos_continuos(fila, col)
                     for s_dest in saltos:
                         f_dest, c_dest = s_dest
-                        # Calcular pieza intermedia para eliminarla
                         df = 1 if f_dest > fila else -1
                         dc = 1 if c_dest > col else -1
                         f_int, c_int = fila + df, col + dc
-                        # Si es reina, busca la pieza enemiga en el camino largo
-                        if self.MyBoard[fila][col] == 3:
+                        if self.MyBoard[fila][col] == 3:  # Reina larga
                             while self.MyBoard[f_int][c_int] == 0:
                                 f_int += df
                                 c_int += dc
                         capturas_disponibles.append(((fila, col), (f_dest, c_dest), (f_int, c_int)))
 
-                    # Si no hay capturas obligatorias o Forzar está en False, buscamos movimientos simples
-                    if not capturas_disponibles or not self.regla_bot_forzar:
-                        self.obtener_movimientos_simples_bot(fila, col, movimientos_simples)
+                    # Si no hay capturas obligatorias en esta ficha, recopila pasos simples
+                    self.obtener_movimientos_simples_bot(fila, col, movimientos_simples)
 
-        # 2. Resolución de la acción
+        # 2. SELECCIÓN DE ACCIÓN SEGÚN REGLAS DE CHECKBOX DEL BOT
         if capturas_disponibles:
-            # El BOT siempre prioriza capturar si existen
-            origen, destino, intermedia = random.choice(capturas_disponibles)
+            # Filtrar capturas óptimas (Rutas de Máximo Peso) y subóptimas (Rutas cortas)
+            capturas_maximas = []
+            capturas_cortas = []
+
+            for orig, dest, inter in capturas_disponibles:
+                f_o, c_o = orig
+                f_d, c_d = dest
+                df_u = 1 if f_d > f_o else -1
+                dc_u = 1 if c_d > c_o else -1
+
+                # Simulación rápida local para saber el peso de esta rama específica del BOT
+                val_orig = self.MyBoard[f_o][c_o]
+                self.MyBoard[f_d][c_d] = val_orig
+                self.MyBoard[f_o][c_o] = 0
+                peso_rama = 1 + self.calcular_peso_maximo_captura(f_d, c_d, vector_prohibido=(-df_u, -dc_u))
+                self.MyBoard[f_o][c_o] = val_orig
+                self.MyBoard[f_d][c_d] = 0
+
+                if peso_rama == peso_max_bot:
+                    capturas_maximas.append((orig, dest, inter))
+                else:
+                    capturas_cortas.append((orig, dest, inter))
+
+            # Elección inteligente/estrategia del BOT
+            if self.regla_bot_forzar or not capturas_cortas:
+                # Juega estricto o no tiene opciones cortas: toma el camino de máximo peso
+                origen, destino, intermedia = random.choice(capturas_maximas)
+                decision_fue_optima = True
+            else:
+                # Clásico: 70% va por el combo máximo, 30% elige la jugada trampa (captura corta)
+                if random.random() < 0.30:
+                    origen, destino, intermedia = random.choice(capturas_cortas)
+                    decision_fue_optima = False
+                else:
+                    origen, destino, intermedia = random.choice(capturas_maximas)
+                    decision_fue_optima = True
+
+            # --- EJECUCIÓN ATÓMICA DE LA CAPTURA DEL BOT ---
             f_orig, c_orig = origen
             f_dest, c_dest = destino
             f_int, c_int = intermedia
 
             valor_bot = self.MyBoard[f_orig][c_orig]
             self.MyBoard[f_orig][c_orig] = 0
-            self.MyBoard[f_int][c_int] = 0  # Humano eliminado
+            self.MyBoard[f_int][c_int] = 0  # Tu ficha blanca es eliminada
             self.MyBoard[f_dest][c_dest] = valor_bot
             self.actualizar_contadores_interfaz()
 
-            # --- EVALUAR COMBO CONTINUO ---
+            # --- EVALUAR COMBO RECURSIVO DEL BOT CORREGIDO ---
             df_u = 1 if f_dest > f_orig else -1
             dc_u = 1 if c_dest > c_orig else -1
-            # Importante: Prohibimos el regreso en el combo
             saltos_extras = self.calcular_saltos_continuos(f_dest, c_dest, vector_prohibido=(-df_u, -dc_u))
 
-            if saltos_extras:
+            if saltos_extras and decision_fue_optima:
+                # El BOT va por el camino óptimo y legalmente debe continuar la cadena
                 self.status_bar.showMessage("🤖 BOT en combo múltiple...")
                 self.tablero.update()
-                # El BOT salta de nuevo tras 600ms (efecto visual)
                 QTimer.singleShot(600, self.ejecutar_turno_bot)
                 return
             else:
-                self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
+                # --- AUDITORÍA DE REGLAS v1.7 (CIERRE DE JUGADA) ---
+                se_auto_soplo_por_combo_incompleto = False
+
+                # REGLA CRÍTICA: Si la pieza terminó su turno pero REALMENTE aún tenía saltos extras,
+                # significa que dejó el combo a medias. Castigo implacable inmediato en el aterrizaje.
+                if self.regla_bot_soplado and saltos_extras:
+                    self.MyBoard[f_dest][c_dest] = 0  # La pieza se desvanece por combo incompleto
+                    self.status_bar.showMessage(
+                        f"💨 ¡COMBO INCOMPLETO! Ficha del BOT soplada en ({f_dest}, {c_dest}) por dejar piezas vivas.")
+                    self.actualizar_contadores_interfaz()
+                    se_auto_soplo_por_combo_incompleto = True
+
+                # Si no se sopló por combo incompleto, revisamos si otra pieza estática debió haber comido más
+                if self.regla_bot_soplado and not decision_fue_optima and not se_auto_soplo_por_combo_incompleto:
+                    for f_inf, c_inf in piezas_maximas_bot:
+                        if self.MyBoard[f_inf][c_inf] in (1, 3):
+                            self.MyBoard[f_inf][c_inf] = 0
+                            self.status_bar.showMessage(
+                                f"💨 ¡BOBA DEL BOT! Pieza de la IA soplada en ({f_inf}, {c_inf}) por omitir combo de {peso_max_bot}.")
+                    self.actualizar_contadores_interfaz()
+
+                # Cierre seguro del turno del BOT
+                pieza_viva_al_final = self.MyBoard[f_dest][c_dest] in (1, 3)
+                if pieza_viva_al_final:
+                    self.status_bar.showMessage(f"🤖 El BOT ejecutó su jugada en ({f_dest}, {c_dest}).")
+                    self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
+                else:
+                    self.finalizar_turno_bot()
 
         elif movimientos_simples:
+            # El BOT realiza un movimiento simple de aproximación estándar
             origen, destino = random.choice(movimientos_simples)
             f_orig, c_orig = origen
             f_dest, c_dest = destino
             valor_bot = self.MyBoard[f_orig][c_orig]
 
-            # Si el BOT hace un simple pero tenía capturas en el tablero (y Soplado está ON)
             if self.regla_bot_soplado and self.verificar_si_bot_tenia_capturas_globales():
-                self.MyBoard[f_orig][c_orig] = 0  # Soplado: no llega al destino
-                self.status_bar.showMessage("💨 ¡Soplado al BOT por omitir captura!")
+                self.MyBoard[f_orig][c_orig] = 0  # Soplado completo por omitir captura
+                self.status_bar.showMessage("💨 ¡BOBA DEL BOT! Pieza de la IA soplada por caminar en vez de capturar.")
+                self.actualizar_contadores_interfaz()
                 self.finalizar_turno_bot()
             else:
                 self.MyBoard[f_orig][c_orig] = 0
                 self.MyBoard[f_dest][c_dest] = valor_bot
                 self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
         else:
-            # Bloqueo total del BOT
             self.game_active = False
-            self.status_bar.showMessage("¡HAS GANADO! El BOT no tiene movimientos.")
+            self.status_bar.showMessage("¡HAS GANADO! El BOT se ha quedado sin movimientos legales.")
 
             return
 
