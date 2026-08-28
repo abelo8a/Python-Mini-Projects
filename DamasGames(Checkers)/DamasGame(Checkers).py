@@ -1,4 +1,5 @@
 import sys
+import copy
 import traceback
 import faulthandler
 import random
@@ -29,7 +30,7 @@ class TableroDamas(QWidget):
         self.setMouseTracking(True)
 
     def mousePressEvent(self, event):
-        """v1.8: Maneja el turno humano con Foto Pre-Movimiento y protección de matriz real."""
+        """v2.5: Turno humano con Arquitectura Inmutable y Foto Pre-Movimiento."""
         if not self.main_window.game_active or self.main_window.turno_actual != "HUMANO":
             return
 
@@ -43,32 +44,32 @@ class TableroDamas(QWidget):
         if not (0 <= fila < 8 and 0 <= col < 8):
             return
 
-        # --- CASO A: EL JUGADOR YA SE ENCUENTRA EN MEDIO DE UN COMBO ---
+        # --- CASO A: EL JUGADOR YA ESTÁ EN MEDIO DE UN COMBO ---
         if self.main_window.en_combo_captura:
             if (fila, col) in self.main_window.movimientos_validos:
                 f_origen, c_origen = self.main_window.pieza_en_combo
                 valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-                df_usado = 1 if fila > f_origen else -1
-                dc_usado = 1 if col > c_origen else -1
+                df_u = 1 if fila > f_origen else -1
+                dc_u = 1 if col > c_origen else -1
 
-                # Limpieza de pieza comida
-                f_scan, c_scan = f_origen + df_usado, c_origen + dc_usado
-                while f_scan != fila and c_scan != col:
-                    if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
-                        self.main_window.MyBoard[f_scan][c_scan] = 0
+                # Limpieza física de la pieza comida
+                f_s, c_s = f_origen + df_u, c_origen + dc_u
+                while f_s != fila and c_s != col:
+                    if self.main_window.MyBoard[f_s][c_s] in (1, 3):
+                        self.main_window.MyBoard[f_s][c_s] = 0
                         break
-                    f_scan += df_usado
-                    c_scan += dc_usado
+                    f_s += df_u
+                    c_s += dc_u
 
                 self.main_window.MyBoard[fila][col] = valor_pieza
                 self.main_window.MyBoard[f_origen][c_origen] = 0
                 self.main_window.actualizar_contadores_interfaz()
 
-                # Coronación inmediata en combo (Freno de turno)
+                # Coronación inmediata en medio de combo (Regla oficial: se detiene)
                 if valor_pieza == 2 and fila == 0:
                     self.main_window.MyBoard[fila][col] = 4
-                    self.main_window.status_bar.showMessage(f"👑 ¡REINA coronada en ({fila}, {col})!")
+                    self.main_window.status_bar.showMessage("👑 ¡Coronada! La Reina nace y el turno termina.")
                     self.main_window.interrumpir_timers_combo()
                     self.main_window.en_combo_captura = False
                     self.main_window.pieza_en_combo = None
@@ -78,8 +79,8 @@ class TableroDamas(QWidget):
                     self.main_window.cambiar_turno("BOT")
                     return
 
-                saltos_sig = self.main_window.calcular_saltos_continuos(fila, col,
-                                                                        vector_prohibido=(-df_usado, -dc_usado))
+                # Buscar si el combo continúa
+                saltos_sig = self.main_window.calcular_saltos_continuos(fila, col, (-df_u, -dc_u))
 
                 if saltos_sig:
                     self.main_window.pieza_en_combo = (fila, col)
@@ -98,16 +99,16 @@ class TableroDamas(QWidget):
             return
         # --- CASO B: TURNO NORMAL ESTÁNDAR (PRIMER CLIC DEL MOVIMIENTO DEL JUGADOR) ---
         if self.main_window.MyBoard[fila][col] in (2, 4):
-            # 1. Foto Analítica de Peso Global ANTES de cualquier acción
-            piezas_maximas, peso_max_global = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+            # 1. Tomamos la Foto Analítica del peso máximo global ANTES de mover
+            piezas_max, peso_max_original = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
 
-            # 2. Si "Forzar Captura" está activo, bloqueamos selección de piezas subóptimas
+            # 2. Si "Forzar Captura" está activo, bloqueamos la selección de piezas subóptimas
             if self.main_window.regla_forzar_captura:
-                if piezas_maximas and (fila, col) not in piezas_maximas:
+                if piezas_max and (fila, col) not in piezas_max:
                     self.main_window.pieza_seleccionada = None
                     self.main_window.movimientos_validos.clear()
                     self.main_window.status_bar.showMessage(
-                        f"⚠️ ¡MÁXIMA CAPTURA! Hay rutas de {peso_max_global} fichas. Elige la correcta.")
+                        f"⚠️ ¡MÁXIMA CAPTURA! Hay rutas de {peso_max_original} fichas. Elige la correcta.")
                     self.update()
                     return
 
@@ -120,18 +121,17 @@ class TableroDamas(QWidget):
                 for f_v, c_v in self.main_window.movimientos_validos:
                     df_u, dc_u = (1 if f_v > fila else -1), (1 if c_v > col else -1)
 
-                    # Simulación local ultra-rápida de peso para esta rama
-                    val_temp = self.main_window.MyBoard[fila][col]
-                    self.main_window.MyBoard[f_v][c_v] = val_temp
-                    self.main_window.MyBoard[fila][col] = 0
-                    peso_rama = 1 + self.main_window.calcular_peso_maximo_captura(f_v, c_v,
+                    # Simulación local ultra-rápida (Usando la nueva función Inmune v2.5)
+                    # No necesitamos restaurar nada porque usamos un clon interno
+                    tablero_clon = [f[:] for f in self.main_window.MyBoard]
+                    tablero_clon[f_v][c_v] = tablero_clon[fila][col]
+                    tablero_clon[fila][col] = 0
+                    # La función de peso ya se encarga de borrar la intermedia en su clon
+
+                    peso_rama = 1 + self.main_window.calcular_peso_maximo_captura(f_v, c_v, tablero_clon,
                                                                                   vector_prohibido=(-df_u, -dc_u))
 
-                    # Restauración inmediata
-                    self.main_window.MyBoard[fila][col] = val_temp
-                    self.main_window.MyBoard[f_v][c_v] = 0
-
-                    if peso_rama == peso_max_global:
+                    if peso_rama == peso_max_original:
                         saltos_validos.append((f_v, c_v))
 
                 if saltos_validos:
@@ -144,13 +144,13 @@ class TableroDamas(QWidget):
             f_origen, c_origen = self.main_window.pieza_seleccionada
             valor_pieza = self.main_window.MyBoard[f_origen][c_origen]
 
-            # Tomamos foto del peso máximo para el arbitraje posterior
-            _, peso_max_original = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+            # Tomamos de nuevo la foto del peso máximo original para el arbitraje posterior (Paso 4)
+            _, peso_max_arbitraje = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
             fue_salto_captura = False
             df_usado = 1 if fila > f_origen else -1
             dc_usado = 1 if col > c_origen else -1
 
-            # Barrido diagonal real para eliminar la pieza enemiga comida
+            # Barrido diagonal real para eliminar la pieza enemiga de la matriz física
             f_scan, c_scan = f_origen + df_usado, c_origen + dc_usado
             while f_scan != fila and c_scan != col:
                 if self.main_window.MyBoard[f_scan][c_scan] in (1, 3):
@@ -160,14 +160,14 @@ class TableroDamas(QWidget):
                 f_scan += df_usado
                 c_scan += dc_usado
 
-            # Trasladar la pieza de forma física en la matriz real
+            # Trasladar la pieza a su destino y vaciar el origen
             self.main_window.MyBoard[fila][col] = valor_pieza
             self.main_window.MyBoard[f_origen][c_origen] = 0
 
             if fue_salto_captura:
                 self.main_window.actualizar_contadores_interfaz()
 
-                # 1. VERIFICAR SI LA PIEZA TIENE MÁS SALTOS (Combo Continuo)
+                # 1. VERIFICAR COMBO CONTINUO: Escaneamos si nacen nuevos saltos
                 saltos_siguientes = self.main_window.calcular_saltos_continuos(
                     fila, col, vector_prohibido=(-df_usado, -dc_usado)
                 )
@@ -177,31 +177,32 @@ class TableroDamas(QWidget):
                     self.main_window.pieza_en_combo = (fila, col)
                     self.main_window.pieza_seleccionada = (fila, col)
                     self.main_window.movimientos_validos = saltos_siguientes
-                    self.main_window.status_bar.showMessage("¡Combo! Tienes 3 segundos para el siguiente salto.")
+                    self.main_window.status_bar.showMessage("¡Combo detectado! Continúa capturando.")
                     self.update()
                     self.main_window.iniciar_cuenta_regresiva_combo(fila, col, saltos_siguientes)
                     return
                 else:
                     # --- LA CADENA DE SALTOS TERMINÓ DEFINITIVAMENTE ---
                     fue_soplada_por_peso = False
-                    comidas_realizadas = 1
+                    comidas_realizadas = 1  # Se asume 1 si llegó aquí tras un salto simple
 
                     if self.main_window.regla_soplado_automatico:
-                        # AUDITORÍA v1.8: Comparamos contra la foto fija (peso_max_original)
-                        # Solo hay infracción si lo que comiste es MENOR a lo máximo que había al inicio
-                        if comidas_realizadas < peso_max_original:
-                            piezas_max, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
-                            if piezas_max and isinstance(piezas_max, list) and len(piezas_max) > 0:
-                                for f_inf, c_inf in piezas_max:
-                                    if self.main_window.MyBoard[f_inf][c_inf] in (2, 4):
-                                        self.main_window.MyBoard[f_inf][c_inf] = 0
+                        # AUDITORÍA v2.5: Comparamos contra la foto fija (peso_max_arbitraje)
+                        # El radar de soplado ahora es externo y no ensucia la matriz real
+                        if comidas_realizadas < peso_max_arbitraje:
+                            piezas_infractoras, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+                            if piezas_infractoras:
+                                for fi, ci in piezas_infractoras:
+                                    # ESCUDO: Solo borrar si la pieza sigue ahí y es humana
+                                    if self.main_window.MyBoard[fi][ci] in (2, 4):
+                                        self.main_window.MyBoard[fi][ci] = 0
                                         self.main_window.status_bar.showMessage(
-                                            f"💨 ¡BOBA DE PESO! Soplada en ({f_inf}, {c_inf}) por omitir combo de {peso_max_original}.")
-                                        if f_inf == fila and c_inf == col:
+                                            f"💨 SOPLADO: Omitiste ruta de {peso_max_arbitraje} fichas.")
+                                        if fi == fila and ci == col:
                                             fue_soplada_por_peso = True
                                 self.main_window.actualizar_contadores_interfaz()
 
-                    # 2. EVALUAR CORONACIÓN: Solo si la pieza no fue desvanecida por el arbitraje
+                    # 2. EVALUAR CORONACIÓN: Se ejecuta sobre el estado final limpio de la matriz
                     if not fue_soplada_por_peso:
                         self.main_window.evaluar_coronacion(fila, col, valor_pieza)
 
@@ -217,22 +218,22 @@ class TableroDamas(QWidget):
 
                 fue_soplada = False
                 if self.main_window.regla_soplado_automatico:
-                    # Si caminaste habiendo capturas abiertas (peso_max_original > 0), es infracción
-                    if peso_max_original > 0:
-                        piezas_max, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
-                        if piezas_max and len(piezas_max) > 0:
-                            infractor = piezas_max[0]
-                            f_inf, c_inf = infractor
+                    # Si caminaste habiendo capturas abiertas en la Foto Inicial, es infracción
+                    if peso_max_arbitraje > 0:
+                        piezas_max_inf, _ = self.main_window.obtener_piezas_con_maxima_captura_global("HUMANO")
+                        if piezas_max_inf:
+                            # Extraemos el primer infractor de forma segura
+                            f_i, c_i = piezas_max_inf[0]
 
-                            if f_inf == f_origen and c_inf == c_origen:
+                            if f_i == f_origen and c_i == c_origen:
                                 self.main_window.MyBoard[fila][col] = 0
                                 self.main_window.status_bar.showMessage(
-                                    f"💨 ¡BOBA! Soplada en ({fila}, {col}) por omitir captura.")
+                                    f"💨 ¡BOBA! Ficha soplada en ({fila}, {col}) por omitir su captura.")
                                 fue_soplada = True
                             else:
-                                self.main_window.MyBoard[f_inf][c_inf] = 0
+                                self.main_window.MyBoard[f_i][c_i] = 0
                                 self.main_window.status_bar.showMessage(
-                                    f"💨 ¡BOBA! Soplada en ({f_inf}, {c_inf}) por distraído.")
+                                    f"💨 ¡BOBA! Ficha soplada en ({f_i}, {c_i}) por distraído.")
 
                             self.main_window.actualizar_contadores_interfaz()
 
@@ -253,68 +254,58 @@ class TableroDamas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        box_size = 50
-        radius = box_size / 2
+        # Importante: No activar Antialiasing si el sistema está dando problemas
 
-        # 1. DIBUJAR CASILLAS
-        for fila in range(8):
-            for col in range(8):
-                bg_color = QColor(240, 217, 181) if (fila + col) % 2 == 0 else QColor(181, 136, 99)
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(bg_color))
-                painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
+        for f in range(8):
+            for c in range(8):
+                # 1. Dibujar el fondo del cuadro
+                x, y = c * 50, f * 50
+                color_fondo = QColor("#D18B47") if (f + c) % 2 == 0 else QColor("#FFCE9E")
+                painter.fillRect(x, y, 50, 50, color_fondo)
 
-                if self.main_window.pieza_seleccionada == (fila, col):
-                    painter.setBrush(QBrush(QColor(0, 255, 255, 80)))
-                    painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
+                # 2. Resaltar movimientos válidos
+                if (f, c) in self.main_window.movimientos_validos:
+                    painter.setBrush(QColor(0, 255, 0, 120))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawRect(x, y, 50, 50)
 
-                if (fila, col) in self.main_window.movimientos_validos:
-                    painter.setBrush(QBrush(QColor(0, 255, 0, 100)))
-                    painter.drawRect(col * box_size, fila * box_size, box_size, box_size)
+                # 3. Extraer pieza de la matriz sagrada
+                try:
+                    pieza = self.main_window.MyBoard[f][c]
+                except IndexError:
+                    continue  # Seguridad ante errores de matriz
 
-                pieza = self.main_window.MyBoard[fila][col]
-                if pieza == 0:
-                    continue
+                if pieza != 0:
+                    # Sombra de la pieza
+                    painter.setBrush(QColor(0, 0, 0, 80))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(x + 7, y + 7, 36, 36)
 
-                # 2. ASIGNAR COLORES DE LAS PIEZAS CONSIDERANDO EL PARPADEO
-                # Si la pieza está en la lista de infracción y el ciclo de parpadeo está encendido
-                if self.main_window.en_penalizacion_parpadeo and (fila,
-                                                                  col) in self.main_window.piezas_a_parpadear and self.main_window.color_parpadeo_activo:
-                    color_pieza = QColor(255, 140, 0)  # Naranja/Oro brillante de advertencia
-                    color_borde = QColor(255, 0, 0)  # Rojo penalización
-                else:
-                    if pieza in (1, 3):  # Rojas
-                        color_pieza = QColor(200, 20, 20)
-                        color_borde = QColor(100, 5, 5)
-                    elif pieza in (2, 4):  # Blancas
-                        color_pieza = QColor(240, 240, 240)
-                        color_borde = QColor(150, 150, 150)
+                    # Color de la pieza según bando
+                    if pieza in (1, 3):  # ROJAS (BOT)
+                        painter.setBrush(QColor("#CC0000"))
+                    elif pieza in (2, 4):  # BLANCAS (HUMANO)
+                        painter.setBrush(QColor("#F0F0F0"))
 
-                center_x = int((col * box_size) + radius)
-                center_y = int((fila * box_size) + radius)
-                radio_pieza = int(radius * 0.8)
+                    painter.setPen(QPen(Qt.GlobalColor.black, 2))
+                    painter.drawEllipse(x + 5, y + 5, 36, 36)
 
-                painter.setPen(QPen(color_borde, 3))
-                painter.setBrush(QBrush(color_pieza))
-                painter.drawEllipse(QPoint(center_x, center_y), radio_pieza, radio_pieza)
+                    # 4. Dibujar distintivo de REINA
+                    if pieza in (3, 4):
+                        painter.setPen(QPen(QColor("#FFD700"), 3))  # Oro
+                        painter.drawEllipse(x + 12, y + 12, 22, 22)
 
-                painter.setPen(QPen(color_borde, 1, Qt.PenStyle.DotLine))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawEllipse(QPoint(center_x, center_y), int(radio_pieza * 0.6), int(radio_pieza * 0.6))
+                        painter.setPen(QColor("#FFD700"))
+                        font = QFont('Arial', 10, QFont.Weight.Bold)
+                        painter.setFont(font)
+                        painter.drawText(x + 18, y + 30, "K")
 
-                # Renderizar corona dorada para Reinas
-                if pieza in (3, 4):
-                    painter.setPen(QPen(QColor(218, 165, 32), 2))
-                    painter.setBrush(QBrush(QColor(255, 215, 0)))
-                    puntos_corona = [
-                        QPoint(center_x - 10, center_y + 6), QPoint(center_x - 12, center_y - 6),
-                        QPoint(center_x - 4, center_y + 0), QPoint(center_x + 0, center_y - 10),
-                        QPoint(center_x + 4, center_y + 0), QPoint(center_x + 12, center_y - 6),
-                        QPoint(center_x + 10, center_y + 6)
-                    ]
-                    painter.drawPolygon(puntos_corona)
-        painter.end()
+        # 5. Resaltar pieza seleccionada (Borde verde)
+        if self.main_window.pieza_seleccionada:
+            fs, cs = self.main_window.pieza_seleccionada
+            painter.setPen(QPen(QColor("#00FF00"), 3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(cs * 50 + 2, fs * 50 + 2, 46, 46)
 
 
 # =====================================================================
@@ -692,52 +683,52 @@ class DamasGame(QMainWindow):
                     f_actual += df
                     c_actual += dc
 
-    def calcular_peso_maximo_captura(self, fila, col, tablero_virtual=None, visitados=None, vector_prohibido=None):
-        """v1.8: Calcula el peso sobre un tablero virtual para evitar borrar piezas reales por error."""
+    def calcular_peso_maximo_captura(self, fila, col, tablero_actual=None, visitados=None, vector_prohibido=None):
+        """v2.5: Versión de Inmutabilidad Absoluta. No usa Backtracking."""
         if visitados is None: visitados = set()
 
-        # Si es la primera llamada, creamos una copia profunda del tablero para no alterar el real
-        if tablero_virtual is None:
-            tablero_virtual = [fila[:] for fila in self.MyBoard]
+        # Si es la primera llamada, usamos el tablero real, de lo contrario usamos el simulado
+        if tablero_actual is None:
+            tablero_actual = [fila[:] for fila in self.MyBoard]
 
-        # Necesitamos que calcular_saltos_continuos sea capaz de leer el tablero virtual
-        # Para no complicar, haremos el escaneo local manual aquí:
-        saltos_inmediatos = self.obtener_saltos_desde_tablero(fila, col, tablero_virtual, vector_prohibido)
+        # Buscamos saltos sobre el tablero que estamos procesando
+        saltos = self.obtener_saltos_desde_tablero(fila, col, tablero_actual, vector_prohibido)
 
-        if not saltos_inmediatos:
+        if not saltos:
             return 0
 
         max_comidas = 0
-        tipo_pieza = tablero_virtual[fila][col]
+        tipo_pieza = tablero_actual[fila][col]
 
-        for f_dest, c_dest in saltos_inmediatos:
+        for f_dest, c_dest in saltos:
             df = 1 if f_dest > fila else -1
             dc = 1 if c_dest > col else -1
             f_int, c_int = fila + df, col + dc
 
-            # Localizar pieza intermedia (Reina o Peón)
+            # Localizar pieza intermedia
             if tipo_pieza in (3, 4):
-                while tablero_virtual[f_int][c_int] == 0:
-                    f_int += df
+                while 0 <= f_int < 8 and 0 <= c_int < 8 and tablero_actual[f_int][c_int] == 0:
+                    f_int += df;
                     c_int += dc
 
             if (f_int, c_int) in visitados: continue
 
-            # SIMULACIÓN EN EL CLON
-            visitados.add((f_int, c_int))
-            original_int = tablero_virtual[f_int][c_int]
-            tablero_virtual[f_dest][c_dest] = tipo_pieza
-            tablero_virtual[fila][col] = 0
-            tablero_virtual[f_int][c_int] = 0
+            # --- CREACIÓN DE UN NUEVO UNIVERSO (No toca el anterior) ---
+            nuevo_tablero = [f[:] for f in tablero_actual]
+            nuevo_tablero[f_dest][c_dest] = tipo_pieza
+            nuevo_tablero[fila][col] = 0
+            nuevo_tablero[f_int][c_int] = 0
 
-            peso = 1 + self.calcular_peso_maximo_captura(f_dest, c_dest, tablero_virtual, visitados, (-df, -dc))
-            if peso > max_comidas: max_comidas = peso
+            nuevos_visitados = visitados.copy()
+            nuevos_visitados.add((f_int, c_int))
 
-            # BACKTRACKING EN EL CLON
-            tablero_virtual[fila][col] = tipo_pieza
-            tablero_virtual[f_dest][c_dest] = 0
-            tablero_virtual[f_int][c_int] = original_int
-            visitados.remove((f_int, c_int))
+            # Explorar el futuro en el nuevo tablero
+            comidas_futuras = self.calcular_peso_maximo_captura(f_dest, c_dest, nuevo_tablero, nuevos_visitados,
+                                                                (-df, -dc))
+            total = 1 + comidas_futuras
+
+            if total > max_comidas:
+                max_comidas = total
 
         return max_comidas
 
@@ -806,163 +797,94 @@ class DamasGame(QMainWindow):
         return registro_piezas[max_bajas_globales], max_bajas_globales
 
     def ejecutar_turno_bot(self):
-        """
-        v1.7 STABLE: Motor de la IA adaptativo con soporte de Ley de Máxima Captura.
-        Audita de forma estricta los combos incompletos y las bobas globales del BOT.
-        """
-        if not self.game_active:
+        """v2.6: Blindaje atómico. La IA usa una dimensión paralela (deepcopy)."""
+        if not self.game_active or self.turno_actual != "BOT":
             return
 
-        capturas_disponibles = []
-        movimientos_simples = []
+        # 1. TRABAJAR SOBRE UNA COPIA TOTALMENTE DESCONECTADA
+        tablero_fantasma = self.obtener_clon_sagrado()
 
-        # 1. ESCANEO GLOBAL DE POSIBILIDADES CON CÁLCULO DE PESO (Rutas Máximas)
-        peso_max_bot = 0
-        piezas_maximas_bot = []
+        capturas_legales = []
+        pasos_legales = []
 
-        for fila in range(8):
-            for col in range(8):
-                if self.MyBoard[fila][col] in (1, 3):  # Piezas del BOT (Rojas)
-                    # Calculamos el peso máximo de captura predictivo para esta pieza
-                    peso = self.calcular_peso_maximo_captura(fila, col)
-                    if peso > 0:
-                        if peso > peso_max_bot:
-                            peso_max_bot = peso
-                            piezas_maximas_bot = [(fila, col)]
-                        elif peso == peso_max_bot:
-                            piezas_maximas_bot.append((fila, col))
+        # Escaneo sobre el tablero fantasma
+        for f in range(8):
+            for c in range(8):
+                if tablero_fantasma[f][c] in (1, 3):
+                    # Buscar saltos
+                    saltos = self.obtener_saltos_desde_tablero(f, c, tablero_fantasma, None)
+                    for s in saltos:
+                        fd, cd = s
+                        df, dc = (1 if fd > f else -1), (1 if cd > c else -1)
+                        fi, ci = f + df, c + dc
+                        if tablero_fantasma[f][c] == 3:  # Reina
+                            while 0 <= fi < 8 and 0 <= ci < 8 and tablero_fantasma[fi][ci] == 0:
+                                fi += df;
+                                ci += dc
+                        # Solo es captura válida si la pieza intermedia es HUMANA
+                        if 0 <= fi < 8 and 0 <= ci < 8 and tablero_fantasma[fi][ci] in (2, 4):
+                            capturas_legales.append(((f, c), (fd, cd), (fi, ci)))
 
-                    # Escanear saltos inmediatos para la toma de acción de este turno
-                    saltos = self.calcular_saltos_continuos(fila, col)
-                    for s_dest in saltos:
-                        f_dest, c_dest = s_dest
-                        df = 1 if f_dest > fila else -1
-                        dc = 1 if c_dest > col else -1
-                        f_int, c_int = fila + df, col + dc
-                        if self.MyBoard[fila][col] == 3:  # Reina larga
-                            while self.MyBoard[f_int][c_int] == 0:
-                                f_int += df
-                                c_int += dc
-                        capturas_disponibles.append(((fila, col), (f_dest, c_dest), (f_int, c_int)))
+                    # Buscar pasos simples
+                    pasos = self.obtener_pasos_desde_tablero(f, c, tablero_fantasma)
+                    for p in pasos:
+                        pasos_legales.append(((f, c), p))
 
-                    # Si no hay capturas obligatorias en esta ficha, recopila pasos simples
-                    self.obtener_movimientos_simples_bot(fila, col, movimientos_simples)
+        # 2. SELECCIÓN DE JUGADA
+        decision = None  # (orig, dest, tipo, inter)
 
-        # 2. SELECCIÓN DE ACCIÓN SEGÚN REGLAS DE CHECKBOX DEL BOT
-        if capturas_disponibles:
-            # Filtrar capturas óptimas (Rutas de Máximo Peso) y subóptimas (Rutas cortas)
-            capturas_maximas = []
-            capturas_cortas = []
+        if self.nivel_dificultad_bot == 3:
+            mejor_v = float('-inf')
+            # El Minimax ahora recibirá copias profundas en cada iteración
+            opciones_m = self.obtener_todos_los_movimientos(tablero_fantasma, "BOT")
+            for m in opciones_m:
+                clon_m = copy.deepcopy(tablero_fantasma)
+                self.ejecutar_movimiento_virtual(clon_m, m)
+                res = self.minimax(clon_m, 3, float('-inf'), float('inf'), False)
+                if res > mejor_v:
+                    mejor_v = res
+                    (o, d, t, i) = m  # i ya viene calculado de obtener_todos_los_movimientos v2.2
+                    decision = (o, d, t, i)
 
-            for orig, dest, inter in capturas_disponibles:
-                f_o, c_o = orig
-                f_d, c_d = dest
-                df_u = 1 if f_d > f_o else -1
-                dc_u = 1 if c_d > c_o else -1
+        if not decision:
+            if capturas_legales:
+                o, d, i = random.choice(capturas_legales)
+                decision = (o, d, "CAPTURA", i)
+            elif pasos_legales:
+                o, d = random.choice(pasos_legales)
+                decision = (o, d, "SIMPLE", None)
 
-                # Simulación rápida local para saber el peso de esta rama específica del BOT
-                val_orig = self.MyBoard[f_o][c_o]
-                self.MyBoard[f_d][c_d] = val_orig
-                self.MyBoard[f_o][c_o] = 0
-                peso_rama = 1 + self.calcular_peso_maximo_captura(f_d, c_d, vector_prohibido=(-df_u, -dc_u))
-                self.MyBoard[f_o][c_o] = val_orig
-                self.MyBoard[f_d][c_d] = 0
+        # 3. EJECUCIÓN FÍSICA (Aquí es el único lugar donde tocamos MyBoard)
+        if decision:
+            (fo, co), (fd, cd), tipo, inter = decision
+            val_bot = self.MyBoard[fo][co]
 
-                if peso_rama == peso_max_bot:
-                    capturas_maximas.append((orig, dest, inter))
-                else:
-                    capturas_cortas.append((orig, dest, inter))
+            # ELIMINAR ORIGEN
+            self.MyBoard[fo][co] = 0
 
-            # Elección inteligente/estrategia del BOT
-            if self.regla_bot_forzar or not capturas_cortas:
-                # Juega estricto o no tiene opciones cortas: toma el camino de máximo peso
-                origen, destino, intermedia = random.choice(capturas_maximas)
-                decision_fue_optima = True
-            else:
-                # Clásico: 70% va por el combo máximo, 30% elige la jugada trampa (captura corta)
-                if random.random() < 0.30:
-                    origen, destino, intermedia = random.choice(capturas_cortas)
-                    decision_fue_optima = False
-                else:
-                    origen, destino, intermedia = random.choice(capturas_maximas)
-                    decision_fue_optima = True
+            if tipo == "CAPTURA" and inter:
+                f_int, c_int = inter
+                # SEGURO ANTI-ERRORES: Solo borramos si hay una pieza blanca
+                if 0 <= f_int < 8 and 0 <= c_int < 8 and self.MyBoard[f_int][c_int] in (2, 4):
+                    self.MyBoard[f_int][c_int] = 0
 
-            # --- EJECUCIÓN ATÓMICA DE LA CAPTURA DEL BOT ---
-            f_orig, c_orig = origen
-            f_dest, c_dest = destino
-            f_int, c_int = intermedia
-
-            valor_bot = self.MyBoard[f_orig][c_orig]
-            self.MyBoard[f_orig][c_orig] = 0
-            self.MyBoard[f_int][c_int] = 0  # Tu ficha blanca es eliminada
-            self.MyBoard[f_dest][c_dest] = valor_bot
-            self.actualizar_contadores_interfaz()
-
-            # --- EVALUAR COMBO RECURSIVO DEL BOT CORREGIDO ---
-            df_u = 1 if f_dest > f_orig else -1
-            dc_u = 1 if c_dest > c_orig else -1
-            saltos_extras = self.calcular_saltos_continuos(f_dest, c_dest, vector_prohibido=(-df_u, -dc_u))
-
-            if saltos_extras and decision_fue_optima:
-                # El BOT va por el camino óptimo y legalmente debe continuar la cadena
-                self.status_bar.showMessage("🤖 BOT en combo múltiple...")
-                self.tablero.update()
-                QTimer.singleShot(600, self.ejecutar_turno_bot)
-                return
-            else:
-                # --- AUDITORÍA DE REGLAS v1.7 (CIERRE DE JUGADA) ---
-                se_auto_soplo_por_combo_incompleto = False
-
-                # REGLA CRÍTICA: Si la pieza terminó su turno pero REALMENTE aún tenía saltos extras,
-                # significa que dejó el combo a medias. Castigo implacable inmediato en el aterrizaje.
-                if self.regla_bot_soplado and saltos_extras:
-                    self.MyBoard[f_dest][c_dest] = 0  # La pieza se desvanece por combo incompleto
-                    self.status_bar.showMessage(
-                        f"💨 ¡COMBO INCOMPLETO! Ficha del BOT soplada en ({f_dest}, {c_dest}) por dejar piezas vivas.")
-                    self.actualizar_contadores_interfaz()
-                    se_auto_soplo_por_combo_incompleto = True
-
-                # Si no se sopló por combo incompleto, revisamos si otra pieza estática debió haber comido más
-                if self.regla_bot_soplado and not decision_fue_optima and not se_auto_soplo_por_combo_incompleto:
-                    for f_inf, c_inf in piezas_maximas_bot:
-                        if self.MyBoard[f_inf][c_inf] in (1, 3):
-                            self.MyBoard[f_inf][c_inf] = 0
-                            self.status_bar.showMessage(
-                                f"💨 ¡BOBA DEL BOT! Pieza de la IA soplada en ({f_inf}, {c_inf}) por omitir combo de {peso_max_bot}.")
-                    self.actualizar_contadores_interfaz()
-
-                # Cierre seguro del turno del BOT
-                pieza_viva_al_final = self.MyBoard[f_dest][c_dest] in (1, 3)
-                if pieza_viva_al_final:
-                    self.status_bar.showMessage(f"🤖 El BOT ejecutó su jugada en ({f_dest}, {c_dest}).")
-                    self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
-                else:
-                    self.finalizar_turno_bot()
-
-        elif movimientos_simples:
-            # El BOT realiza un movimiento simple de aproximación estándar
-            origen, destino = random.choice(movimientos_simples)
-            f_orig, c_orig = origen
-            f_dest, c_dest = destino
-            valor_bot = self.MyBoard[f_orig][c_orig]
-
-            if self.regla_bot_soplado and self.verificar_si_bot_tenia_capturas_globales():
-                self.MyBoard[f_orig][c_orig] = 0  # Soplado completo por omitir captura
-                self.status_bar.showMessage("💨 ¡BOBA DEL BOT! Pieza de la IA soplada por caminar en vez de capturar.")
+                self.MyBoard[fd][cd] = val_bot
                 self.actualizar_contadores_interfaz()
-                self.finalizar_turno_bot()
+
+                # Verificar combos (usando MyBoard real para el siguiente salto)
+                df_u, dc_u = (1 if fd > fo else -1), (1 if cd > co else -1)
+                if self.calcular_saltos_continuos(fd, cd, (-df_u, -dc_u)):
+                    self.status_bar.showMessage("🤖 BOT en combo...")
+                    self.tablero.update()
+                    QTimer.singleShot(600, self.ejecutar_turno_bot)
+                    return
             else:
-                self.MyBoard[f_orig][c_orig] = 0
-                self.MyBoard[f_dest][c_dest] = valor_bot
-                self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
+                self.MyBoard[fd][cd] = val_bot
+
+            self.finalizar_turno_bot(fd, cd, val_bot)
         else:
             self.game_active = False
-            self.status_bar.showMessage("¡HAS GANADO! El BOT se ha quedado sin movimientos legales.")
-
-            return
-
-        self.tablero.update()
-        self.cambiar_turno("HUMANO")
+            self.status_bar.showMessage("¡HAS GANADO! El BOT no tiene movimientos.")
 
     def finalizar_turno_bot(self, f=None, c=None, valor=None):
         """Ejecuta coronación, refresca tablero y cambia turno al humano."""
@@ -970,6 +892,11 @@ class DamasGame(QMainWindow):
             self.evaluar_coronacion(f, c, valor)
         self.tablero.update()
         self.cambiar_turno("HUMANO")
+
+    def clonar_tablero(self, tablero_orig):
+        """Crea una copia física absoluta para que la IA no toque el tablero real."""
+        return [fila[:] for fila in tablero_orig]
+
 
     def verificar_si_bot_tenia_capturas_globales(self):
         """Escanea si el BOT tenía alguna captura obligatoria disponible en el tablero."""
@@ -1161,13 +1088,16 @@ class DamasGame(QMainWindow):
         self.regla_bot_soplado = self.chk_bot_soplado.isChecked()
 
     def obtener_todas_las_piezas_con_captura_humano(self):
-        """Escanea globalmente todo el tablero para encontrar qué fichas blancas tienen saltos obligatorios."""
+        """v1.9.2: Escaneo global con soporte de 'Rayo de Reina' para capturas obligatorias."""
         piezas_con_salto = []
         for f in range(8):
-            for col in range(8):
-                if self.MyBoard[f][col] in (2, 4):  # Fichas del humano
-                    if self.calcular_saltos_continuos(f, col):
-                        piezas_con_salto.append((f, col))
+            for c in range(8):
+                # Solo analizamos piezas blancas (2: peón, 4: reina)
+                if self.MyBoard[f][c] in (2, 4):
+                    # Usamos nuestra función universal que ya tiene la lógica de Rayos
+                    saltos = self.calcular_saltos_continuos(f, c)
+                    if saltos:
+                        piezas_con_salto.append((f, c))
         return piezas_con_salto
 
     def analizar_y_calibrar_cerebro_bot(self):
@@ -1211,6 +1141,152 @@ class DamasGame(QMainWindow):
 
         nombres = {1: "PRINCIPIANTE", 2: "INTERMEDIO", 3: "MAESTRO 🔥"}
         self.status_bar.showMessage(f"🧠 Cerebro del BOT calibrado en modo: {nombres[nivel]}")
+
+    def evaluar_tablero(self, tablero):
+        """Asigna un valor numérico al estado actual del tablero."""
+        puntuacion = 0
+        for f in range(8):
+            for c in range(8):
+                pieza = tablero[f][c]
+                if pieza == 1: puntuacion += 5   # Peón BOT
+                elif pieza == 3: puntuacion += 10 # Reina BOT
+                elif pieza == 2: puntuacion -= 5   # Peón Humano
+                elif pieza == 4: puntuacion -= 10 # Reina Humana
+        return puntuacion
+
+    def minimax(self, tablero, profundidad, alfa, beta, es_maximizando):
+        if profundidad == 0:
+            return self.evaluar_tablero(tablero)
+
+        if es_maximizando:
+            max_eval = float('-inf')
+            # IMPORTANTE: obtener_todos_los_movimientos debe leer el tablero que recibe
+            movs = self.obtener_todos_los_movimientos(tablero, "BOT")
+            for m in movs:
+                clon_interno = [fil[:] for fil in tablero]  # Clonación en cada paso
+                self.ejecutar_movimiento_virtual(clon_interno, m)
+                ev = self.minimax(clon_interno, profundidad - 1, alfa, beta, False)
+                max_eval = max(max_eval, ev)
+                alfa = max(alfa, ev)
+                if beta <= alfa: break
+            return max_eval
+        else:
+            min_eval = float('inf')
+            movs = self.obtener_todos_los_movimientos(tablero, "HUMANO")
+            for m in movs:
+                clon_interno = [fil[:] for fil in tablero]
+                self.ejecutar_movimiento_virtual(clon_interno, m)
+                ev = self.minimax(clon_interno, profundidad - 1, alfa, beta, True)
+                min_eval = min(min_eval, ev)
+                beta = min(beta, ev)
+                if beta <= alfa: break
+            return min_eval
+
+    def obtener_todos_los_movimientos(self, tablero, bando):
+        """v2.2: Ahora incluye la coordenada de la pieza capturada en el paquete de datos."""
+        posibles = []
+        valores = (1, 3) if bando == "BOT" else (2, 4)
+        for f in range(8):
+            for c in range(8):
+                if tablero[f][c] in valores:
+                    # Buscamos capturas (Prioridad)
+                    saltos = self.obtener_saltos_desde_tablero(f, c, tablero, None)
+                    for s in saltos:
+                        fd, cd = s
+                        # Calcular pieza intermedia EXACTA aquí mismo
+                        df, dc = (1 if fd > f else -1), (1 if cd > c else -1)
+                        fi, ci = f + df, c + dc
+                        while 0 <= fi < 8 and 0 <= ci < 8 and tablero[fi][ci] == 0:
+                            fi += df;
+                            ci += dc
+
+                        # Guardamos (origen, destino, tipo, intermedia)
+                        posibles.append(((f, c), s, "CAPTURA", (fi, ci)))
+
+                    if not posibles:  # Solo si no hay capturas
+                        pasos = self.obtener_pasos_desde_tablero(f, c, tablero)
+                        for p in pasos:
+                            posibles.append(((f, c), p, "SIMPLE", None))
+        return posibles
+
+    def ejecutar_movimiento_virtual(self, tablero_clon, mov):
+        """v2.2: Usa la pieza intermedia pre-calculada."""
+        (f_o, c_o), (f_d, c_d), tipo, inter = mov
+        pieza = tablero_clon[f_o][c_o]
+        tablero_clon[f_d][c_d] = pieza
+        tablero_clon[f_o][c_o] = 0
+
+        if tipo == "CAPTURA" and inter:
+            fi, ci = inter
+            if 0 <= fi < 8 and 0 <= ci < 8:
+                tablero_clon[fi][ci] = 0
+
+    def obtener_pasos_desde_tablero(self, fila, col, tablero):
+        """v1.8: Devuelve una lista de destinos posibles para un paso simple (sin saltar)."""
+        pasos = []
+        pieza = tablero[fila][col]
+
+        # Definir direcciones según tipo de pieza
+        if pieza == 1:  # Peón Rojo (BOT): Solo baja
+            direcciones = [(1, -1), (1, 1)]
+        elif pieza == 2:  # Peón Blanco (Humano): Solo sube
+            direcciones = [(-1, -1), (-1, 1)]
+        else:  # Reinas (3 o 4): Todas las direcciones
+            direcciones = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+        for df, dc in direcciones:
+            nf, nc = fila + df, col + dc
+
+            if pieza in (3, 4):  # Lógica de rayo para Reina
+                while 0 <= nf < 8 and 0 <= nc < 8 and tablero[nf][nc] == 0:
+                    pasos.append((nf, nc))
+                    nf += df
+                    nc += dc
+            else:  # Lógica de paso único para Peón
+                if 0 <= nf < 8 and 0 <= nc < 8 and tablero[nf][nc] == 0:
+                    pasos.append((nf, nc))
+
+        return pasos
+
+    def ejecutar_movimiento_maestro(self, movimiento_elegido):
+        """Traduce la decisión del Minimax a la matriz real y maneja capturas/combos."""
+        (f_orig, c_orig), (f_dest, c_dest), tipo = movimiento_elegido
+        valor_bot = self.MyBoard[f_orig][c_orig]
+
+        if tipo == "CAPTURA":
+            # 1. Identificar pieza humana intermedia
+            df = 1 if f_dest > f_orig else -1
+            dc = 1 if c_dest > c_orig else -1
+            f_int, c_int = f_orig + df, c_orig + dc
+            while self.MyBoard[f_int][c_int] == 0:  # Para Reinas
+                f_int += df;
+                c_int += dc
+
+            # 2. Ejecutar captura atómica
+            self.MyBoard[f_orig][c_orig] = 0
+            self.MyBoard[f_int][c_int] = 0
+            self.MyBoard[f_dest][c_dest] = valor_bot
+            self.actualizar_contadores_interfaz()
+
+            # 3. Verificar si el Maestro tiene un combo (recursividad)
+            saltos_sig = self.calcular_saltos_continuos(f_dest, c_dest, vector_prohibido=(-df, -dc))
+            if saltos_sig:
+                self.status_bar.showMessage("🤖 BOT Maestro calculando combo...")
+                self.tablero.update()
+                # El Maestro no falla combos, se llama a sí mismo para terminar la cadena
+                QTimer.singleShot(600, self.ejecutar_turno_bot)
+                return
+        else:
+            # Movimiento simple decidido por inteligencia
+            self.MyBoard[f_orig][c_orig] = 0
+            self.MyBoard[f_dest][c_dest] = valor_bot
+
+        # Cierre de turno
+        self.finalizar_turno_bot(f_dest, c_dest, valor_bot)
+
+    def obtener_clon_sagrado(self):
+        """Crea una copia absoluta y desconectada de la matriz de juego."""
+        return copy.deepcopy(self.MyBoard)
 
 
 if __name__ == '__main__':
